@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  documentation:
+    name: Documentation checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Check Markdown structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(README.md PROJECT_LEDGER.md docs/API.md docs/VERSION_HISTORY.md)
+          for file in "${files[@]}"; do
+            test -f "$file" || { echo "Missing required documentation: $file" >&2; exit 1; }
+            grep -q '^# ' "$file" || { echo "Missing H1 heading: $file" >&2; exit 1; }
+            fences=$(grep -c '^```' "$file" || true)
+            test "$((fences % 2))" -eq 0 || { echo "Unclosed code fence: $file" >&2; exit 1; }
+          done
+
+      - name: Check whitespace and repository state
+        run: git diff --check
+
+  python-and-django:
+    name: Python and Django checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install project dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [[ -f uv.lock ]]; then
+            python -m pip install uv
+            uv sync --frozen --all-extras
+          elif [[ -f pyproject.toml ]]; then
+            python -m pip install -e ".[dev]" || python -m pip install -e .
+          elif [[ -f requirements-dev.txt ]]; then
+            python -m pip install -r requirements-dev.txt
+          elif [[ -f requirements.txt ]]; then
+            python -m pip install -r requirements.txt
+          else
+            echo "No Python dependency manifest yet; continuing with the repository baseline."
+          fi
+
+      - name: Compile Python sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -type f -name '*.py' -not -path './.git/*' | grep -q .; then
+            python -m compileall -q .
+          else
+            echo "No Python source yet; compile check deferred until the Django project is initialized."
+          fi
+
+      - name: Run Django checks and migration checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f manage.py ]]; then
+            python manage.py check
+            python manage.py makemigrations --check --dry-run
+            python manage.py migrate --plan
+          else
+            echo "No manage.py yet; Django checks deferred until the Django project is initialized."
+          fi
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f manage.py ]]; then
+            python manage.py test
+          elif find . -maxdepth 4 -type f \( -name 'test_*.py' -o -name '*_test.py' \) -not -path './.git/*' | grep -q .; then
+            python -m unittest discover -v
+          else
+            echo "No test suite yet; test execution deferred until the project is initialized."
+          fi
