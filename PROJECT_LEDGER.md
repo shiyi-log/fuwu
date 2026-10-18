@@ -68,6 +68,7 @@
 | 2026-10-19 | GitHub | 仓库可见性 | `gh repo view shiyi-log/fuwu` | 已改为公开 |
 | 2026-10-19 | GitHub Actions | CI 首轮执行 | [run 39165315026](https://github.com/shiyi-log/fuwu/actions/runs/39165315026) | 失败；`setup-python` 的 pip 缓存要求仓库存在依赖清单 |
 | 2026-10-19 | GitHub Actions | CI 修复后执行 | [run 39165406604](https://github.com/shiyi-log/fuwu/actions/runs/39165406604) | 通过；文档检查与 Python/Django 基线均成功 |
+| 2026-10-19 | GitHub Actions | CD 手动预检 | [run 39165606306](https://github.com/shiyi-log/fuwu/actions/runs/39165606306) | 通过；CI 复用、源码包构建和 artifact 上传成功，发布步骤按 `publish=false` 跳过 |
 | 待补充 | 本地开发 | Django 配置检查 | `python manage.py check` | 待 Django 工程创建后执行 |
 | 待补充 | CI/测试 | 迁移与 API 测试 | `makemigrations --check --dry-run`、测试命令 | 待配置 |
 
