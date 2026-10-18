@@ -14,7 +14,7 @@
 
 | 版本 | 状态 | 日期 | 变更摘要 | API 影响 | 数据/迁移 | 验证证据 | Git 标签 | 发布人 |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Unreleased | 开发中 | 2026-10-19 | 建立 API 文档、项目台账和 CI/CD 基线；仓库改为公开 | 新增 Django/DRF 文档约定；暂无已登记业务接口 | 无 | Markdown 检查；CI/CD 工作流静态检查；GitHub Actions 待执行 | - | - |
+| Unreleased | 开发中 | 2026-10-19 | 建立 API 文档、项目台账和 CI/CD 基线；仓库改为公开 | 新增 Django/DRF 文档约定；暂无已登记业务接口 | 无 | GitHub Actions CI run `39165406604` 通过；CD 尚无版本标签验收 | - | - |
 
 ## Unreleased
 
@@ -24,6 +24,7 @@
 - 建立本版本记录表，区分发布状态、API 影响、迁移和验证证据。
 - 建立 [项目台账](../PROJECT_LEDGER.md)，记录 Django/DRF 目标栈、里程碑、风险和验证证据。
 - 建立 CI/CD 工作流：CI 检查文档、Python/Django 迁移与测试；CD 在 SemVer 标签上构建源码包并创建 GitHub Release。
+- CI 首轮执行因不存在依赖清单而触发 pip 缓存错误，已移除缓存前置条件并在修复提交后通过。
 
 ### 修复
 
