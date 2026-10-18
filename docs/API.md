@@ -1,210 +1,175 @@
 # fuwu API 接口文档
 
-> 文档状态：模板与接口登记基线  
-> 最后更新：2026-10-19  
-> 目标技术栈：Django + Django REST Framework（DRF）  
-> 当前实现：仓库尚未登记可用业务接口，也尚未建立 Django 项目
+> 状态：已实现的 v1 接口登记
+> 更新日期：2026-10-19
+> 实现来源：`release_api/views.py`、`release_api/urls.py`、`fuwu_service/core.py`
 
-本文档用于维护 `fuwu` 对外 HTTP API。接口实现完成后，应在接口登记表中补齐请求、响应、鉴权和错误语义，并通过可执行测试或联调记录验证。
+fuwu 为 Heyue 及未来项目提供独立发行存储管理。Django 路由和保留的轻量 `ThreadingHTTPServer` 入口共用同一领域服务；两者都使用本文档的 JSON 合同。
 
-本文档中的 Django/DRF 规则是目标实现约定，不表示当前仓库已经安装或运行 Django、DRF。
+## 通用约定
 
-## 1. 通用约定
-
-### 1.1 基础信息
-
-| 项目 | 约定 |
-| --- | --- |
-| 传输协议 | HTTP/HTTPS |
-| 数据格式 | `application/json`（除非接口另有说明） |
-| 字符编码 | UTF-8 |
-| 时间格式 | ISO 8601，建议使用带时区的 UTC 时间 |
-| 路径版本 | 推荐使用 `/api/v1` 前缀；落地前以服务端路由为准 |
-| 请求 ID | 建议支持 `X-Request-ID`，用于日志追踪 |
-
-### 1.2 鉴权
-
-当前项目尚未确定鉴权方案。接口落地时，在每个接口的“鉴权”列中填写实际要求，并同步记录：
-
-- 凭证位置，例如 `Authorization: Bearer <token>`；
-- 凭证失效和刷新规则；
-- 访客、普通用户、管理员等角色权限；
-- 未认证与无权限时分别返回 `401` 和 `403`。
-
-### 1.3 状态码
-
-| 状态码 | 含义 | 使用场景 |
-| --- | --- | --- |
-| `200` | 成功 | 查询或更新成功并返回内容 |
-| `201` | 已创建 | 创建资源成功 |
-| `204` | 无内容 | 删除成功或成功但无需返回正文 |
-| `400` | 请求参数错误 | 参数缺失、格式错误或校验失败 |
-| `401` | 未认证 | 未提供或无法验证凭证 |
-| `403` | 无权限 | 已认证但不允许执行操作 |
-| `404` | 资源不存在 | 路径或目标资源不存在 |
-| `409` | 资源冲突 | 幂等键、唯一约束或状态冲突 |
-| `422` | 语义校验失败 | 请求格式正确但业务校验不通过 |
-| `429` | 请求过于频繁 | 超过限流策略 |
-| `500` | 服务端错误 | 未预期的服务端故障 |
-
-### 1.4 错误响应
-
-除非某个接口另有约定，错误响应建议采用以下结构：
+- 基础路径：`/`；API 路径为 `/api/...`。
+- 请求和响应：`application/json; charset=utf-8`。
+- 健康检查 `GET /healthz` 不需要鉴权。
+- 除健康检查外，管理 API 使用 `Authorization: Bearer <token>`。token 由服务端身份系统或环境注入，前端不保存 AWS 凭据。
+- `X-Request-ID` 用于追踪；写入操作优先使用 `Idempotency-Key` 作为 requestId。重复 requestId 返回第一次已记录的结果。
+- 失败响应固定为：
 
 ```json
-{
-  "code": "ERROR_CODE",
-  "message": "可读的错误说明",
-  "request_id": "request-id",
-  "details": {}
-}
+{"code":"error_code","message":"safe message","request_id":"req-..."}
 ```
 
-`code` 用于稳定的程序判断，`message` 面向排查和展示，`details` 用于字段级错误或补充上下文。不要让调用方依赖 `message` 的具体文案。
+错误消息不包含 AWS access key、secret、session token、Authorization 头或本机 staging 路径。
 
-### 1.5 分页与排序
+## 权限
 
-列表接口如采用分页，统一记录以下参数及返回字段，避免不同接口使用含义不一致的名称：
-
-```text
-GET /api/v1/resources?page=1&page_size=20&sort=-created_at
-```
-
-建议返回：
-
-```json
-{
-  "items": [],
-  "page": 1,
-  "page_size": 20,
-  "total": 0
-}
-```
-
-## 2. 接口登记表
-
-下表是唯一的接口索引。新增或修改接口时，先更新本表，再补充后文的详细说明。
-
-| 接口 ID | 方法 | 路径 | 摘要 | 鉴权 | 状态 | 负责人 | 最近验证 |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| API-001 | `TBD` | `TBD` | 待定义 | 待定义 | 规划中 | 待分配 | 未验证 |
-
-状态建议使用：`规划中`、`开发中`、`可测试`、`已发布`、`已废弃`。已发布接口必须有验证方式或测试链接；已废弃接口必须注明替代接口和下线时间。
-
-## 3. Django + DRF 实现约定
-
-### 3.1 路由与版本
-
-- 项目根路由在 Django 的 `config/urls.py`（或实际项目配置模块）中挂载 API；应用级路由放在对应 app 的 `urls.py`。
-- 统一使用 `path("api/v1/...", include(...))` 或 DRF router 挂载资源，具体形式以实际目录为准。
-- `ViewSet` 使用 `basename` 明确资源名；自定义 action 必须标注 HTTP 方法、路径和鉴权要求。
-- URL 参数命名使用 `snake_case`，资源路径使用复数名词；不要在路径中暴露数据库自增主键以外的内部字段。
-- 路由变更必须同步更新本文件的接口登记表，并增加 Django `resolve()` 或 API client 路由测试。
-
-目标路由示例（仅为约定，不代表已实现）：
-
-```python
-# config/urls.py
-urlpatterns = [
-    path("api/v1/", include("service.api_urls")),
-]
-```
-
-### 3.2 序列化与校验
-
-- 默认使用 `rest_framework.serializers.Serializer` 或 `ModelSerializer`；复杂写入逻辑使用显式 `create()` / `update()`，避免把业务副作用隐藏在字段转换中。
-- 输入与输出可使用不同 serializer；写入 serializer 不应因为复用方便而暴露只读字段、内部状态或敏感信息。
-- `read_only_fields`、必填字段、空值和默认值必须在 serializer 中明确，并在 API 文档参数表中保持一致。
-- 跨字段校验放在 serializer 的 `validate()` 或领域服务中；模型约束用于数据完整性，不能只依赖接口层校验。
-- 日期、枚举、金额和标识符等字段应显式声明格式与精度，并为无效输入提供稳定错误码。
-
-### 3.3 权限与认证
-
-- DRF 的 `DEFAULT_AUTHENTICATION_CLASSES` 与 `DEFAULT_PERMISSION_CLASSES` 应在 Django settings 中集中配置；单接口例外必须在视图上显式声明并在接口登记表中说明。
-- 使用 `IsAuthenticated`、`IsAdminUser` 或自定义 `BasePermission` 表达角色和对象级权限；不能仅依赖前端隐藏按钮。
-- 权限验证至少覆盖：未认证、已认证但无权、资源所有者、管理员等边界；对应响应分别验证 `401` 或 `403`。
-- 凭证、密钥和生产 token 不进入源码、示例或测试日志；使用环境变量或密钥管理服务注入。
-
-### 3.4 数据库与迁移
-
-- Django model 变更后运行 `python manage.py makemigrations`，审阅生成的 migration，再运行 `python manage.py migrate`。
-- 已发布 migration 不应被重写；修复应创建新的迁移文件，并在版本记录中填写数据影响和回滚方式。
-- CI/发布前至少运行 `python manage.py makemigrations --check --dry-run` 与 `python manage.py migrate --plan`；有数据库时再执行测试数据库迁移。
-- 破坏性字段变更采用扩展、回填、切换、收缩的阶段式迁移，并记录兼容窗口。
-
-### 3.5 Django/DRF 验证清单
-
-接口标记为“可测试”前，至少记录以下证据：
-
-1. `python manage.py check` 通过；
-2. Django 路由解析测试通过；
-3. serializer 的有效输入、无效输入和边界值测试通过；
-4. 认证与权限矩阵测试通过；
-5. API 请求/响应和错误码测试通过；
-6. migration 检查通过，涉及数据库时完成测试库迁移；
-7. 验证命令、运行时间、环境和 CI 链接写入接口登记表或版本记录。
-
-## 4. 接口详细说明模板
-
-复制以下模板为每个真实接口建立小节，并将 `TBD` 替换为实际内容。
-
-### API-001：TBD
-
-| 项目 | 内容 |
+| 权限 | 允许的操作 |
 | --- | --- |
-| 方法与路径 | `TBD` |
-| 用途 | `TBD` |
-| 状态 | 规划中 |
-| 鉴权 | `TBD` |
-| 幂等性 | `TBD` |
-| 速率限制 | `TBD` |
+| `release.storage.read` | 项目、版本、存储状态和审计查询 |
+| `release.storage.publish` | 校验并发布受保护 staging/job |
+| `release.storage.rollback` | 回滚 channel latest 指针；仍需 `superadmin` 标记和请求体二次确认 |
 
-#### 请求
+这些权限独立于 Heyue 的 `system.version.manage`。
 
-Headers：
+## 数据和版本规则
 
-```http
-Content-Type: application/json
-X-Request-ID: <request-id>
-Authorization: Bearer <token>
-```
+- `project` 使用小写 slug；`channel` 只能是 `stable` 或 `beta`。
+- 内部 `version` 严格为 `MAJOR.MINOR.PATCH`，每段只能是单个数字 `0` 到 `9`。因此 `0.0.9` 的下一版本是 `0.1.0`，`0.0.10` 会被拒绝。
+- Git tag 由数字版本派生为 `v<version>`，例如 `version=0.0.1`、`tag=v0.0.1`；tag 前缀不会写入数字版本字段。
+- revision 必须是 40 位十六进制提交 SHA；manifest 必须是 `schemaVersion=1`、`draft=false`、`prerelease=false` 的最终发行。
+- 发布对象写入 `releases/{project}/v{version}/` immutable 前缀，channel 指针写入 `releases/{project}/{channel}/latest.json`。
 
-Path、Query 与 Body 参数：
+## 接口登记
 
-| 参数 | 位置 | 类型 | 必填 | 说明 | 示例 |
+| ID | 方法 | 路径 | 权限 | 状态 | 实现 |
 | --- | --- | --- | --- | --- | --- |
-| `TBD` | `TBD` | `TBD` | `TBD` | `TBD` | `TBD` |
+| API-001 | GET | `/healthz` | 无 | 可用 | `release_api/views.py:healthz` |
+| API-002 | GET | `/api/projects` | `release.storage.read` | 可用 | `release_api/views.py:projects` |
+| API-003 | GET | `/api/releases` | `release.storage.read` | 可用 | `release_api/views.py:releases` |
+| API-004 | GET | `/api/release-storage/status` | `release.storage.read` | 可用 | `release_api/views.py:status` |
+| API-005 | POST | `/api/release-storage/publish` | `release.storage.publish` | 可用 | `release_api/views.py:publish` |
+| API-006 | POST | `/api/release-storage/rollback` | `release.storage.rollback` + superadmin | 可用 | `release_api/views.py:rollback` |
+| API-007 | GET | `/api/release-storage/audit` | `release.storage.read` | 可用 | `release_api/views.py:audit` |
+
+## API-001：健康检查
+
+`GET /healthz` 返回 `200`：
+
+```json
+{"status":"ok"}
+```
+
+## API-002：项目列表
+
+`GET /api/projects` 返回：
+
+```json
+{"items":[{"id":"heyue","name":"heyue","repository":"shiyi-log/heyue","created_at":"2026-10-19T00:00:00Z"}],"request_id":"req-..."}
+```
+
+## API-003：发行列表
+
+`GET /api/releases?project=heyue&channel=stable` 的 query 参数均可选。响应包含最新指针标记、对象 HEAD 状态和资产摘要：
+
+```json
+{
+  "items": [{
+    "id": "...",
+    "project_id": "heyue",
+    "version": "0.0.1",
+    "channel": "stable",
+    "repository": "shiyi-log/heyue",
+    "tag": "v0.0.1",
+    "revision": "40位提交SHA",
+    "release_id": 100102,
+    "published_at": "2026-10-19T00:00:00Z",
+    "digest": "64位摘要",
+    "manifest_key": "releases/heyue/v0.0.1/manifest.json",
+    "status": "published",
+    "latest": true,
+    "objectHeadStatus": "verified",
+    "artifacts": [{"name":"SHA256SUMS","key":"releases/heyue/v0.0.1/SHA256SUMS","size":123,"sha256":"64位摘要"}]
+  }],
+  "request_id":"req-..."
+}
+```
+
+`objectHeadStatus` 为 `verified` 或 `unverified`；查询不会修改对象。
+
+## API-004：存储状态和任务进度
+
+`GET /api/release-storage/status` 返回 provider、统计和最近的 validation、publish、rollback job：
+
+```json
+{
+  "provider":"MemoryObjectStore",
+  "prefix":"releases",
+  "projects":1,
+  "releases":1,
+  "jobs": {
+    "validation":{"status":"validated","progress":100,"jobId":"...","requestId":"...","updatedAt":"..."},
+    "publish":{"status":"published","progress":100,"jobId":"...","requestId":"...","updatedAt":"..."},
+    "rollback":{"status":"idle","progress":0,"jobId":null,"requestId":null,"updatedAt":null}
+  },
+  "request_id":"req-..."
+}
+```
+
+## API-005：发布
+
+`POST /api/release-storage/publish` 只接受受保护 staging/job 引用，不接受任意路径、S3 URL 或凭据。
 
 请求示例：
 
-```http
-TBD
-```
-
-#### 成功响应
-
 ```json
 {
-  "TBD": "TBD"
+  "project":"heyue",
+  "channel":"stable",
+  "version":"0.0.1",
+  "staging_ref":"job-20261019-001"
 }
 ```
 
-#### 失败响应
+服务端从 staging 目录读取 `manifest.json`、`SHA256SUMS` 和资产，校验版本/tag、repository、revision、最终发行标记、路径、文件大小和 SHA256。然后依次上传资产、`SHA256SUMS`、manifest；每个对象都执行 HEAD 摘要回读。全部 immutable 对象成功后才写 channel `latest.json`。同一版本不同 digest 返回 `409 release_conflict`；相同 requestId 返回幂等结果。
 
-| 状态码 | 错误码 | 触发条件 | 调用方处理 |
-| --- | --- | --- | --- |
-| `TBD` | `TBD` | `TBD` | `TBD` |
+成功返回 `201`，重复成功返回 `200`：
 
-#### 兼容性与验证
+```json
+{
+  "status":"published",
+  "job":{"id":"req-...","operation":"publish","status":"published","progress":100},
+  "release":{"version":"0.0.1","channel":"stable","manifest_key":"releases/heyue/v0.0.1/manifest.json","status":"published"}
+}
+```
 
-- 兼容性要求：`TBD`
-- 自动化测试：`TBD`
-- 联调或验收记录：`TBD`
+常见错误：`401 unauthorized`、`403 forbidden`、`404 staging_not_found`、`409 release_conflict`、`422 invalid_version` / `invalid_manifest` / `checksum_mismatch`、`502 storage_verification_failed`。
 
-## 5. 变更规则
+## API-006：回滚
 
-1. 新增字段应优先保持向后兼容；删除字段、改变类型或改变状态码前，先记录版本影响。
-2. 破坏性变更应升级 API 主版本或提供迁移窗口，并在 `docs/VERSION_HISTORY.md` 登记。
-3. 接口状态、路径、鉴权和响应结构发生变化时，同一提交应同时更新本文档和测试。
-4. 示例中的令牌、密码、个人信息和生产数据必须使用占位值。
+`POST /api/release-storage/rollback` 需要独立 rollback 权限、`superadmin` 标记、`confirm=true` 和非空原因。目标必须是已经存在的 immutable release，可以按 `release_id` 或 `version` 指定。
 
+```json
+{
+  "project":"heyue",
+  "channel":"stable",
+  "version":"0.0.1",
+  "confirm":true,
+  "reason":"回滚到已验证版本"
+}
+```
+
+回滚只替换 `releases/heyue/stable/latest.json` 指针，不删除或覆盖历史对象。审计记录 before/after、actor、requestId、时间、原因、pointer key 和 digest。
+
+## API-007：审计
+
+`GET /api/release-storage/audit?project=heyue` 返回发布、校验失败、发布失败和回滚事件。事件详情只包含公开 actor、requestId、状态、进度、对象 key、版本和 SHA256；不会保存 secret/token 或私有 staging 路径。
+
+## 本地验证
+
+```bash
+uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
+uv run --frozen python manage.py check
+uv run --frozen python manage.py makemigrations --check --dry-run
+```
+
+真实 AWS SigV4 上传、匿名 HTTPS GET 和 Heyue updater 端到端 staging 仍须独立验收，不能用本地 MemoryObjectStore 通过替代。

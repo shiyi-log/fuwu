@@ -45,7 +45,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12"]
+        python-version: ["3.14"]
     steps:
       - name: Check out source
         uses: actions/checkout@v7
@@ -101,8 +101,42 @@ jobs:
           set -euo pipefail
           if [[ -f manage.py ]]; then
             python manage.py test
-          elif find . -maxdepth 4 -type f \( -name 'test_*.py' -o -name '*_test.py' \) -not -path './.git/*' | grep -q .; then
-            python -m unittest discover -v
-          else
+          fi
+          if find tests . -maxdepth 4 -type f \( -name 'test_*.py' -o -name '*_test.py' \) -not -path './.git/*' | grep -q .; then
+            python -m unittest discover -s tests -p 'test_*.py' -v
+          elif [[ ! -f manage.py ]]; then
             echo "No test suite yet; test execution deferred until the project is initialized."
           fi
+
+  frontend-vben:
+    name: Vben frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Enable pnpm 10.33.0
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack prepare pnpm@10.33.0 --activate
+
+      - name: Install Vben dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck web-antd
+        working-directory: frontend
+        run: pnpm --filter @vben/web-antd typecheck
+
+      - name: Build web-antd
+        working-directory: frontend
+        run: pnpm --filter @vben/web-antd build

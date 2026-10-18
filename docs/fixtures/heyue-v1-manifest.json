@@ -1,0 +1,38 @@
+{
+  "schemaVersion": 1,
+  "project": "heyue",
+  "repository": "shiyi-log/heyue",
+  "version": "0.0.1",
+  "tag": "v0.0.1",
+  "revision": "0123456789abcdef0123456789abcdef01234567",
+  "releaseId": 100102,
+  "publishedAt": "2026-10-19T00:00:00Z",
+  "draft": false,
+  "prerelease": false,
+  "channel": "stable",
+  "assets": {
+    "docker": {
+      "key": "releases/heyue/v0.0.1/heyue-docker-0.0.1-linux-amd64.tar.gz",
+      "name": "heyue-docker-0.0.1-linux-amd64.tar.gz",
+      "size": 1024,
+      "sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "python": {
+      "key": "releases/heyue/v0.0.1/heyue-python-0.0.1.tar.gz",
+      "name": "heyue-python-0.0.1.tar.gz",
+      "size": 2048,
+      "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "checksums": {
+    "name": "SHA256SUMS",
+    "key": "releases/heyue/v0.0.1/SHA256SUMS",
+    "sha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+    "entries": {
+      "heyue-docker-0.0.1-linux-amd64.tar.gz": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "heyue-python-0.0.1.tar.gz": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    }
+  },
+  "verifiedAt": "2026-10-19T00:00:01Z",
+  "verificationSource": "heyue-release-storage"
+}

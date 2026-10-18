@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "project": "heyue",
+  "channel": "stable",
+  "version": "0.0.1",
+  "tag": "v0.0.1",
+  "revision": "0123456789abcdef0123456789abcdef01234567",
+  "releaseId": 100102,
+  "manifestKey": "releases/heyue/v0.0.1/manifest.json",
+  "manifestSha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+  "publishedAt": "2026-10-19T00:00:00Z",
+  "immutable": true,
+  "verificationSource": "heyue-release-storage"
+}

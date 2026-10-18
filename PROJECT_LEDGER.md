@@ -1,81 +1,113 @@
 # fuwu 项目台账
 
-> 台账状态：初始化  
-> 更新时间：2026-10-19  
-> 数据依据：当前本地仓库结构、Git 远程配置与现有文档；未将目标设计误记为已实现能力。
+> 更新时间：2026-10-19
+> 记录原则：实现、本地测试、CI、真实 AWS 验收和 Heyue 独立验收分开记录。
 
-## 项目概览
+## 项目身份与目的
 
 | 字段 | 内容 |
 | --- | --- |
-| 项目名称 | fuwu |
-| 项目目标 | 建立可维护的 Django + Django REST Framework 服务项目及其 API 文档、版本记录和交付验证流程 |
-| 负责人 | 待指定 |
+| 项目 | fuwu 通用发行管理服务 |
+| 目的 | 为 Heyue 及未来项目提供独立的发行、对象校验、latest 指针、回滚和审计服务 |
 | 仓库 | [shiyi-log/fuwu](https://github.com/shiyi-log/fuwu)（公开） |
 | 本地路径 | `/Users/shiyi/Documents/ChatGPT/fuwu` |
 | 默认分支 | `main` |
-| 当前版本 | 未发布（`Unreleased`） |
-| 当前提交 | `c7d4e8b`（记录 CD 预检通过证据） |
-| 项目状态 | 文档、CI/CD 结构初始化；暂无 Django 运行时代码 |
-| 更新时间 | 2026-10-19 |
+| 当前数字版本 | `0.0.1`（工作树待提交） |
+| Git tag 规则 | `version=0.0.1` 派生 `tag=v0.0.1` |
 
-## 技术栈
+## 当前基线（as of 2026-10-19）
 
-| 层级 | 目标技术 | 当前状态 |
+- 后端入口：[manage.py](/Users/shiyi/Documents/ChatGPT/fuwu/manage.py)、[config/urls.py](/Users/shiyi/Documents/ChatGPT/fuwu/config/urls.py)、[release_api/views.py](/Users/shiyi/Documents/ChatGPT/fuwu/release_api/views.py)。领域服务和存储适配器在 [fuwu_service/core.py](/Users/shiyi/Documents/ChatGPT/fuwu/fuwu_service/core.py)。
+- Python 运行时约束为 `>=3.14`，依赖由 `pyproject.toml` 和 `uv.lock` 管理。
+- 本地 repository 为 SQLite；对象存储默认 MemoryObjectStore，可切换 S3 SigV4。MySQL/Redis 保留为部署替换边界。
+- 前端是完整 Vben Admin 5.7.0 monorepo，二开入口为 `frontend/apps/web-antd`，使用 Vue 3、Ant Design Vue、Node 22.18.0、pnpm 10.33.0。
+- 当前工作树包含待提交实现；提交前使用 `git diff --check` 和测试命令复核。
+
+## 目标与里程碑
+
+| 编号 | 里程碑 | 交付物 | 状态 | 完成证据 |
+| --- | --- | --- | --- | --- |
+| M0 | 仓库与文档 | 公开 GitHub 仓库、README、台账、API 文档、版本记录 | 已完成 | Git remote、本文档及 `docs/` |
+| M1 | Django 服务基线 | 健康检查、Django 路由、轻量兼容入口、SQLite repository | 已完成 | `uv run --frozen python manage.py check`、`/healthz` |
+| M2 | 发行存储核心 | project/release/artifact/channel/latest、SigV4、发布、校验、回滚、审计、RBAC | 已完成（本地） | `tests/test_core.py`、`tests/test_api.py` |
+| M3 | Vben 发行管理 | 项目/频道筛选、版本和 digest、HEAD、job 进度、审计、发布/回滚确认 | 已完成（本地构建） | `frontend/apps/web-antd` typecheck/build（Node 22.18.0 环境） |
+| M4 | Heyue v1 合同 | 匿名 latest/manifest/SHA256SUMS/资产校验；保留 GitHub 默认路径 | 已完成（Docker/Python direct opt-in） | Heyue commits `de68c5b...`、`7ac40d1...`、`5d93dfd...`、`1f3c2b6...`；对象存储定向测试 204 个通过，完整 updater 回归 182 个通过，安装工作流 329 个通过 |
+| M5 | 交付与外部验收 | Docker Compose、CI/CD、真实 S3、匿名 HTTPS、Heyue 独立升级 | 部分完成 | 本地 Compose/CI 配置已写；真实 AWS 和独立升级待验收 |
+
+## API 文档登记
+
+完整字段和错误合同见 [docs/API.md](/Users/shiyi/Documents/ChatGPT/fuwu/docs/API.md)。
+
+| 方法 | 路径 | 权限 | 状态 |
+| --- | --- | --- | --- |
+| GET | `/healthz` | 无 | 已实现 |
+| GET | `/api/projects` | `release.storage.read` | 已实现 |
+| GET | `/api/releases` | `release.storage.read` | 已实现，返回 latest、对象 HEAD、artifacts |
+| GET | `/api/release-storage/status` | `release.storage.read` | 已实现，返回 validation/publish/rollback job |
+| POST | `/api/release-storage/publish` | `release.storage.publish` | 已实现，requestId 幂等 |
+| POST | `/api/release-storage/rollback` | `release.storage.rollback` + superadmin | 已实现，二次确认 |
+| GET | `/api/release-storage/audit` | `release.storage.read` | 已实现 |
+
+## 版本与发布记录
+
+### 0.0.1（开发基线，未发布）
+
+- 数字版本：`0.0.1`。
+- Tag：预期为 `v0.0.1`；不要把 `v` 写进内部数字版本。
+- 版本递增：每个组件只能为 `0` 到 `9`；`0.0.9 -> 0.1.0`，禁止 `0.0.10`。
+- API 影响：首次提供发行管理 API；发布和回滚使用独立权限。
+- 数据边界：SQLite/file repository 可替换 MySQL/Redis；未声明生产数据库迁移完成。
+- 验证：本地单测、Django check/migration check 和 Vben 构建通过；未完成真实 AWS/匿名公网/独立 Heyue updater 验收。
+
+## 决策与假设
+
+- fuwu 不依赖 X-ray；Heyue 只把它作为独立 release-storage provider 使用。
+- 发布只接受受保护 staging/job 引用；服务端不接受任意文件路径、S3 URL 或云凭据。
+- immutable 版本对象位于 `releases/{project}/vX.Y.Z/`；stable/beta 指针分别位于 channel 目录。
+- AWS 凭据只从 root 0600 文件、环境或 IAM role/container credentials 读取；审计、数据库、前端和日志不保存密钥。
+- updater 只匿名 HTTPS GET。fuwu 真实目标配置为 bucket `heyue`、region `ap-southeast-1`、prefix `releases`，这些值不等于已完成 AWS 验收。
+
+## 风险、阻塞与依赖
+
+| 项目 | 当前状态 | 影响/下一步 |
 | --- | --- | --- |
-| 语言 | Python 3.x | 待确认版本 |
-| Web 框架 | Django | 目标栈，尚未安装/初始化 |
-| API 框架 | Django REST Framework | 目标栈，尚未安装/初始化 |
-| 数据库 | 待定（开发环境可先使用 SQLite） | 未配置 |
-| API 格式 | HTTP/HTTPS + JSON | 已在 `docs/API.md` 记录约定 |
-| 版本策略 | Semantic Versioning（`MAJOR.MINOR.PATCH`） | 已在 `docs/VERSION_HISTORY.md` 记录 |
+| 真实 AWS bucket 权限与匿名读策略 | 待确认 | 需要独立执行 SigV4 上传、HEAD digest、匿名 latest/manifest/资产 GET |
+| Heyue Python/uv updater 直接匿名读取 | 代码已完成，外部验收待做 | 配置 `releaseSource=object-storage` 后匿名读取；仍需新主机实际升级证据 |
+| 生产 repository | 待实现 | SQLite 是初版替换边界；生产 MySQL/Redis adapter、连接池、迁移需单独验收 |
+| CI 最新运行 | 待推送后刷新 | 本地 workflow 已改 Python 3.14 + uv；推送后记录实际 run 和执行步骤 |
+| 前端依赖安装 | 受 Node 22.18.0/pnpm 10.33.0 约束 | 在指定 Node/pnpm 环境复跑 typecheck/build |
 
-## 环境台账
+## 验证与证据
 
-| 环境 | 用途 | 配置状态 | 地址/入口 | 负责人 |
-| --- | --- | --- | --- | --- |
-| 本地开发 | 开发、单元测试和 API 联调 | 待配置 Django 项目与依赖 | 待定 | 待指定 |
-| 测试/CI | 自动化检查、迁移和接口测试 | 尚未配置 | 待定 | 待指定 |
-| 生产 | 对外服务 | 尚未规划 | 待定 | 待指定 |
+### 本地 fuwu
 
-## 里程碑
+```bash
+uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
+uv run --frozen python manage.py check
+uv run --frozen python manage.py makemigrations --check --dry-run
+uv run --frozen python manage.py migrate --plan
+```
 
-| 编号 | 里程碑 | 目标交付物 | 状态 | 完成标准 |
-| --- | --- | --- | --- | --- |
-| M0 | 仓库初始化 | Git 仓库、README、文档目录 | 已完成 | `main` 分支可访问，工作区无未提交变更（以实际状态为准） |
-| M1 | Django 基础工程 | Django 项目、依赖文件、开发启动说明 | 待开始 | `manage.py check` 通过，开发服务可启动 |
-| M2 | API 基线 | DRF 配置、版本化路由、serializer、权限约定 | 规划中 | 至少一个真实接口完成登记、测试和错误响应验证 |
-| M3 | 数据层 | model、migration、测试数据库流程 | 规划中 | migration 检查和测试库迁移通过 |
-| M4 | 可交付版本 | 发布标签、版本记录、CI 验证证据 | 规划中 | 版本记录、API 文档、测试与发布信息一致 |
-| M5 | CI/CD 基线 | `.github/workflows/ci.yml`、`.github/workflows/cd.yml` | 已完成 | CI 可在当前文档阶段通过；CD 在 SemVer 标签上构建并发布源码包 |
+当前定向测试基线：17 个测试通过；Django check 和 migration check 通过。测试覆盖版本进位、路径遍历、SigV4 请求、0600 凭据、同版本冲突、requestId 幂等、失败 HEAD 不更新 latest、回滚、权限和 Django API。
 
-## 风险与待决策事项
+### 本地 Heyue
 
-| 风险/事项 | 影响 | 应对措施 | 状态 | 负责人 |
-| --- | --- | --- | --- | --- |
-| Django 与 DRF 版本尚未锁定 | 构建结果和 API 行为可能漂移 | 确定 Python/Django/DRF 兼容矩阵并写入依赖文件 | 待处理 | 待指定 |
-| 数据库未选型 | 迁移、并发和部署方式无法验收 | 明确开发、测试、生产数据库及备份策略 | 待处理 | 待指定 |
-| 鉴权方案未确定 | API 权限与安全验收无法完成 | 选择 session、token 或 JWT 等方案并记录权限矩阵 | 待处理 | 待指定 |
-| API 业务范围未定义 | 无法登记真实接口或确定 MVP | 补充领域模型、资源和首批接口清单 | 待处理 | 待指定 |
-| CI/CD 与部署入口未配置 | 不能独立证明构建和发布可用 | 建立 CI、迁移检查、API 测试和发布流程 | 待处理 | 待指定 |
-| CD 发布权限与保护规则未配置 | 标签发布可能缺少人工审批或环境保护 | 在 GitHub 环境中配置 required reviewers、分支保护和发布权限 | 待处理 | 待指定 |
+Heyue checkout 的独立提交为 `de68c5b304543c2ddc0e4cea8561949970f94d9c`，定向测试 91 个通过，安装工作流定向测试 329 个通过。该证据证明代码和离线/模拟测试，不证明真实 AWS 或公网升级。
 
-## 验证记录
+### 外部验收边界
 
-| 日期 | 环境 | 检查项 | 命令/证据 | 结果 |
-| --- | --- | --- | --- | --- |
-| 2026-10-19 | 本地仓库 | 文档结构与 Markdown 基本检查 | `git diff --check`；检查 `docs/API.md`、`docs/VERSION_HISTORY.md`、`docs/PROJECT_LEDGER.md` | 通过 |
-| 2026-10-19 | GitHub | 仓库可见性 | `gh repo view shiyi-log/fuwu` | 已改为公开 |
-| 2026-10-19 | GitHub Actions | CI 首轮执行 | [run 39165315026](https://github.com/shiyi-log/fuwu/actions/runs/39165315026) | 失败；`setup-python` 的 pip 缓存要求仓库存在依赖清单 |
-| 2026-10-19 | GitHub Actions | CI 修复后执行 | [run 39165693999](https://github.com/shiyi-log/fuwu/actions/runs/39165693999) | 通过；文档检查与 Python/Django 基线均成功 |
-| 2026-10-19 | GitHub Actions | CD 手动预检 | [run 39165606306](https://github.com/shiyi-log/fuwu/actions/runs/39165606306) | 通过；CI 复用、源码包构建和 artifact 上传成功，发布步骤按 `publish=false` 跳过 |
-| 待补充 | 本地开发 | Django 配置检查 | `python manage.py check` | 待 Django 工程创建后执行 |
-| 待补充 | CI/测试 | 迁移与 API 测试 | `makemigrations --check --dry-run`、测试命令 | 待配置 |
+以下项目仍需真实环境证据：AWS bucket `heyue` 的写入/HEAD/匿名 HTTPS；Heyue updater 在新主机上的 staging、SHA256 校验和实际升级；CI 最新 run 的执行步骤；Docker Compose 在干净主机上的启动。
 
-## 维护规则
+## 下一步
 
-1. 里程碑状态只有在对应完成标准和验证证据具备后才改为“已完成”。
-2. 负责人、环境地址、依赖版本和当前版本发生变化时，同步更新本台账和版本记录。
-3. API 路径、鉴权、serializer、数据模型或 migration 发生变化时，同时更新 `docs/API.md` 与 `docs/VERSION_HISTORY.md`。
-4. 未验证、待配置或目标技术栈必须使用明确状态，不以规划内容代替运行证据。
+1. 推送当前 fuwu 改动并记录 GitHub Actions CI/CD 实际运行结果。
+2. 在真实 AWS 目标执行一次受保护 staging 发布和匿名读验收；记录对象 key、digest、时间和 actor，不记录密钥。
+3. 在新主机执行 Heyue Python/uv object-storage staging、构建和升级验收，保留匿名 HTTPS、摘要和回滚证据。
+4. 设计 MySQL/Redis repository adapter 和生产身份系统；保留 SQLite/MemoryObjectStore 作为本地测试实现。
 
+## 变更日志
+
+| 日期 | 变更 |
+| --- | --- |
+| 2026-10-19 | 创建 Django/uv 发行服务、S3 SigV4 provider、发布/回滚/审计/RBAC API、Vben 5.7.0 二开页面、Heyue v1 匿名对象存储合同、CI/CD、API 文档和版本记录。 |
+| 2026-10-19 | 明确数字版本规则：`0.0.9` 后进入 `0.1.0`，禁止 `0.0.10`；Git tag 使用 `v` 前缀但不写入内部 version。 |
