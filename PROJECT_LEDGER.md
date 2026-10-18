@@ -12,7 +12,7 @@
 | 仓库 | [shiyi-log/fuwu](https://github.com/shiyi-log/fuwu)（公开） |
 | 本地路径 | `/Users/shiyi/Documents/ChatGPT/fuwu` |
 | 默认分支 | `main` |
-| 当前数字版本 | `0.0.1`（工作树待提交） |
+| 当前数字版本 | `0.0.1`（已提交，当前基线 `c720af6`） |
 | Git tag 规则 | `version=0.0.1` 派生 `tag=v0.0.1` |
 
 ## 当前基线（as of 2026-10-19）
@@ -21,7 +21,7 @@
 - Python 运行时约束为 `>=3.14`，依赖由 `pyproject.toml` 和 `uv.lock` 管理。
 - 本地 repository 为 SQLite；对象存储默认 MemoryObjectStore，可切换 S3 SigV4。MySQL/Redis 保留为部署替换边界。
 - 前端是完整 Vben Admin 5.7.0 monorepo，二开入口为 `frontend/apps/web-antd`，使用 Vue 3、Ant Design Vue、Node 22.18.0、pnpm 10.33.0。
-- 当前工作树包含待提交实现；提交前使用 `git diff --check` 和测试命令复核。
+- 当前 `main` 已推送到公开远端；工作树干净，最近提交为 `c720af6`。
 
 ## 目标与里程碑
 
@@ -74,7 +74,7 @@
 | 真实 AWS bucket 权限与匿名读策略 | 待确认 | 需要独立执行 SigV4 上传、HEAD digest、匿名 latest/manifest/资产 GET |
 | Heyue Python/uv updater 直接匿名读取 | 代码已完成，外部验收待做 | 配置 `releaseSource=object-storage` 后匿名读取；仍需新主机实际升级证据 |
 | 生产 repository | 待实现 | SQLite 是初版替换边界；生产 MySQL/Redis adapter、连接池、迁移需单独验收 |
-| CI 最新运行 | 待推送后刷新 | 本地 workflow 已改 Python 3.14 + uv；推送后记录实际 run 和执行步骤 |
+| CI 最新运行 | 待刷新 | 本地 workflow 已改 Python 3.14 + uv，并加入 Vben typecheck/build；需要读取本次推送后的实际 run |
 | 前端依赖安装 | 受 Node 22.18.0/pnpm 10.33.0 约束 | 在指定 Node/pnpm 环境复跑 typecheck/build |
 
 ## 验证与证据
