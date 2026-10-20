@@ -10,17 +10,17 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 源码版本 | `0.0.3` GitHub `main` 候选；正式发布状态待标签与 Release 复核 |
+| 源码版本 | `0.0.3` GitHub `main` 发布基线；由 `v0.0.3` 标签固定发布提交 |
 | 版本格式 | 三段数字，每段一位；`0.0.9` 后进位为 `0.1.0` |
 | 后端 | Python 3.14、uv、轻量 HTTP 服务、Django 适配器 |
 | 前端 | Vben Admin 5.7.0、Vue 3、Ant Design Vue |
 | 前端工具 | Node.js 22.18.0、pnpm 10.33.0 |
 | 业务数据 | 当前使用 SQLite；MySQL/Redis repository adapter 尚未实现 |
 | 对象存储 | 可替换接口；S3 兼容 provider 使用 AWS SigV4 |
-| 候选基线 | GitHub `main` 与本地分支对齐于 `229c1ce`；文件树与已验证候选一致 |
-| 本机部署证据 | 本机 Compose 使用该候选文件树重建 API/前端 `0.0.3` 镜像；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API 健康、浏览器登录和前端访问通过 |
+| 发布基线 | GitHub `main` 与本地分支已对齐；发布提交将由 `v0.0.3` 标签固定 |
+| 本机部署证据 | 本机 Compose 从发布基线工作树无缓存重建 API/前端 `0.0.3` 镜像；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API 健康、登录和前端访问通过 |
 | 云端部署证据 | 本次仅核对 GitHub 仓库与本机 Compose；云端主机和外部服务状态未检查 |
-| 远端引用 | GitHub `main` 已对齐 `229c1ce`；`v0.0.3` 标签、Release、其他 refs 和云端部署仍未更新 |
+| 远端引用 | GitHub `main` 已对齐发布基线；`v0.0.3` 标签和 Release 将由发布工作流创建；云端部署仍需单独验收 |
 
 ## 里程碑
 
@@ -30,8 +30,8 @@
 | M1 | Django 适配、SQLite repository、账号与项目权限 | 已完成；以当前测试结果复核 |
 | M2 | SigV4 对象存储、受保护 staging 发布、回滚和审计 | 本地实现完成；真实云存储需单独验收 |
 | M3 | 项目导航、发行管理、日志、系统设置与构建说明 | 本地实现完成；浏览器验收需单独记录 |
-| M4 | Docker Compose 构建及健康检查 | 本机 `0.0.3` 候选镜像基于与 `229c1ce` 相同的文件树重建；API、前端和 MySQL 健康检查通过，Redis 运行中但未配置健康检查；账号登录也已本地验证 |
-| M5 | 清理公开仓库全部可达历史和发行元数据 | 进行中；`main` 已对齐 `229c1ce`，标签、Release 和其他 refs 仍待复核 |
+| M4 | Docker Compose 构建及健康检查 | 本机 `0.0.3` 发布基线镜像无缓存重建；API、前端和 MySQL 健康检查通过，Redis 运行中但未配置健康检查；账号登录也已本地验证 |
+| M5 | 清理公开仓库全部可达历史和发行元数据 | `main` 已对齐发布基线；标签和 Release 由本次发布工作流创建，云端部署仍需单独验收 |
 
 ## API 文档登记
 
@@ -73,11 +73,11 @@
 
 | 日期 | 范围 | 结果 | 限制 |
 | --- | --- | --- | --- |
-| 2026-10-21 | 0.0.3 候选本机验证 | 与 GitHub `main` 候选 `229c1ce` 文件树一致；82 项 pytest 通过，Django check、迁移漂移检查、Python 编译和 `git diff --check` 通过；无缓存重建 `fuwu-api:0.0.3` 与 `fuwu-frontend:0.0.3`，前端使用 Node.js 22.18.0 / pnpm 10.33.0 构建；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API `/healthz` 为 200，登录/用户信息/项目读取/登出通过，浏览器显示登录成功及空项目列表；前端首页访问成功，未认证 `/api/` 代理按预期返回 401 | 本机 SQLite 初始化账号仅用于验收并在结束时清除；MySQL/Redis 未接入业务仓库；云端主机状态未检查；真实对象存储和外网 HTTPS 未验证 |
-| 2026-10-21 | GitHub `main` 候选 CI | `229c1ce` 的 GitHub Actions CI 全部通过：文档、Python 3.14/Django/测试、Vben 前端 typecheck/build | 仅证明该提交的仓库 CI；不代表云端部署或真实对象存储验收 |
+| 2026-10-21 | 0.0.3 发布基线本机验证 | 发布基线的 82 项 pytest、Django check、迁移漂移检查、Python 编译和 `git diff --check` 通过；无缓存重建 `fuwu-api:0.0.3` 与 `fuwu-frontend:0.0.3`，前端使用 Node.js 22.18.0 / pnpm 10.33.0 构建；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API `/healthz`、登录、用户信息、登出和前端首页访问通过，未认证 `/api/` 代理按预期返回 401 | 本机 SQLite 初始化账号仅用于验收并在结束时清除；MySQL/Redis 未接入业务仓库；云端主机状态未检查；真实对象存储和外网 HTTPS 未验证 |
+| 2026-10-21 | GitHub `main` 发布基线 CI | 当前发布基线的 GitHub Actions CI 全部通过：文档、Python 3.14/Django/测试、Vben 前端 typecheck/build | 仅证明该提交的仓库 CI；不代表云端部署或真实对象存储验收 |
 | 2026-10-20 | Docker 运行状态 | `fuwu-api:0.0.3` 与 `fuwu-frontend:0.0.3` 容器 healthy；API `/healthz` 与前端首页 HTTP 检查成功 | 当时为既有镜像，不包含后续源码改动；不代表生产或对象存储验收 |
 | 2026-10-20 | 历史清理候选审计 | 已发现历史路径和消息仍有规则命中，候选尚未满足推送条件 | 远端 refs 未改写 |
-| 已完成 | GitHub Actions | `229c1ce` 的文档、Python 3.14/Django/测试和 Vben 前端 typecheck/build 全部通过 | 仅证明该提交的仓库 CI |
+| 已完成 | GitHub Actions | 发布基线的文档、Python 3.14/Django/测试和 Vben 前端 typecheck/build 全部通过 | 仅证明该提交的仓库 CI |
 | 待补 | 真实对象存储与云端部署 | 分别记录准确请求、主机和服务证据 | 不能由本地检查或仓库 CI 推断 |
 
 ## 下一步
@@ -85,11 +85,11 @@
 1. 修复和验证系统设置存储路由、脱敏信息权限及前端展示。
 2. 完成中文文档与 CI 文档检查，执行本地后端测试、Django 与迁移检查。
 3. 在保留 `0.0.3` Docker 内容的清理候选中清理路径和历史元数据，并逐 ref 扫描。
-4. 复核 `main` 的 `229c1ce`、标签、PR、Release、资产和云端部署；创建正式标签前确保标签工作流不会意外重复发布。
+4. 为当前发布基线创建 `v0.0.3` 标签并由 CD 工作流生成 GitHub Release；云端部署和真实对象存储另行验收。
 
 ## 变更日志
 
 | 日期 | 变更 |
 | --- | --- |
-| 2026-10-21 | 对齐本地与 GitHub `main` 候选 `229c1ce`，记录本机 Compose 验证和该提交 CI 结果；云端主机状态未检查 |
+| 2026-10-21 | 固化 `0.0.3` 发布基线，记录本机 Compose 验证和当前 `main` CI 结果；待创建 `v0.0.3` 标签并生成 GitHub Release，云端主机状态未检查 |
 | 2026-10-20 | 补充中文公开台账、准确 API 契约、凭据安全边界和验证记录；历史清理仍待远端审计 |
