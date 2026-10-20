@@ -34,6 +34,7 @@ import {
   getReleaseStorageStatusApi,
   publishReleaseApi,
   rollbackReleaseApi,
+  stageRemoteReleaseApi,
 } from '#/api';
 
 const { hasAccessByCodes } = useAccess();
@@ -50,6 +51,7 @@ const storage = ref<ReleaseStorageStatus>({});
 const selectedProject = computed(() => String(route.meta.projectId || ''));
 const selectedChannel = ref<ReleaseChannel>('stable');
 const publishOpen = ref(false);
+const remoteOpen = ref(false);
 const rollbackOpen = ref(false);
 const selectedRelease = ref<ReleaseRecord>();
 
@@ -68,6 +70,7 @@ const rollbackModel = reactive({
   confirmation: '',
   reason: '',
 });
+const remoteModel = reactive({ tag: '', staging_ref: '', assets: '', manifest: '' });
 
 const canPublish = computed(
   () => hasAccessByCodes(['release.storage.publish']),
@@ -198,6 +201,47 @@ function showPublishModal() {
   publishModel.channel = selectedChannel.value;
   publishOpen.value = true;
 }
+function showRemoteModal() {
+  remoteModel.tag = '';
+  remoteModel.staging_ref = '';
+  remoteModel.assets = '';
+  remoteModel.manifest = '';
+  remoteOpen.value = true;
+}
+async function submitRemote() {
+  const assets = remoteModel.assets.split(',').map((item) => item.trim()).filter(Boolean);
+  if (!remoteModel.tag || !remoteModel.staging_ref || !assets.length || !remoteModel.manifest.trim()) {
+    message.warning('请填写 Release tag、staging 引用、资产名称和 manifest JSON。');
+    return;
+  }
+  if (!/^v[0-9]\.[0-9]\.[0-9]$/.test(remoteModel.tag) || !stagingRefPattern.test(remoteModel.staging_ref)) {
+    message.warning('Tag 或 staging 引用格式不正确。');
+    return;
+  }
+  let manifest: Record<string, unknown>;
+  try {
+    const parsed = JSON.parse(remoteModel.manifest);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('invalid');
+    manifest = parsed as Record<string, unknown>;
+  } catch {
+    message.warning('manifest 必须是 JSON 对象。');
+    return;
+  }
+  submitting.value = true;
+  try {
+    await stageRemoteReleaseApi({ project: selectedProject.value, tag: remoteModel.tag, staging_ref: remoteModel.staging_ref, assets, manifest });
+    message.success('远端 Release 已下载到受保护 staging；请继续提交发布任务。');
+    remoteOpen.value = false;
+    const version = typeof manifest.version === 'string' ? manifest.version : remoteModel.tag.slice(1);
+    const revision = typeof manifest.revision === 'string' ? manifest.revision : '';
+    Object.assign(publishModel, { project: selectedProject.value, channel: selectedChannel.value, version, tag: remoteModel.tag, revision, staging_ref: remoteModel.staging_ref });
+    publishOpen.value = true;
+  } catch {
+    message.error('远端 Release 下载失败，请确认 GitHub 授权、资产和校验清单。');
+  } finally {
+    submitting.value = false;
+  }
+}
 function showRollbackModal(record: ReleaseRecord) {
   selectedRelease.value = record;
   rollbackModel.project = releaseProject(record) || '';
@@ -300,7 +344,7 @@ watch([selectedProject, selectedChannel], () => {
         </Select>
         <Button :loading="loading" @click="loadData">刷新</Button>
       </Space>
-      <Button v-if="canPublish" type="primary" @click="showPublishModal">发布版本</Button>
+      <Space v-if="canPublish"><Button @click="showRemoteModal">从 GitHub Release 获取</Button><Button type="primary" @click="showPublishModal">发布版本</Button></Space>
     </div>
 
     <Spin :spinning="loading">
@@ -360,6 +404,16 @@ watch([selectedProject, selectedChannel], () => {
         <Form.Item label="Tag"><Input v-model:value="publishModel.tag" placeholder="可选，默认 v + 数字版本" /></Form.Item>
         <Form.Item label="完整 40 位 Revision" required><Input v-model:value="publishModel.revision" :maxlength="40" placeholder="40 位 commit SHA" /></Form.Item>
         <Form.Item label="受保护 staging 引用" required><Input v-model:value="publishModel.staging_ref" :maxlength="128" placeholder="例如 job-20261020-001" /></Form.Item>
+      </Form>
+    </Modal>
+
+    <Modal v-model:open="remoteOpen" :confirm-loading="submitting" ok-text="下载远端 Release" title="从 GitHub Release 获取" @ok="submitRemote">
+      <Alert class="mb-4" message="服务端会按项目绑定的 GitHub 仓库读取 Release，并校验远端 SHA256SUMS；下载成功后仍需提交发布任务。" show-icon type="info" />
+      <Form layout="vertical">
+        <Form.Item label="Release Tag" required><Input v-model:value="remoteModel.tag" placeholder="例如 v1.0.2" /></Form.Item>
+        <Form.Item label="受保护 staging 引用" required><Input v-model:value="remoteModel.staging_ref" :maxlength="128" placeholder="例如 job-20261021-001" /></Form.Item>
+        <Form.Item label="资产名称（逗号分隔）" required><Input v-model:value="remoteModel.assets" placeholder="例如 app.tar.gz, app.zip" /></Form.Item>
+        <Form.Item label="manifest JSON" required><Input.TextArea v-model:value="remoteModel.manifest" :rows="10" placeholder="粘贴包含 assets、revision、releaseId 等字段的 manifest.json" /></Form.Item>
       </Form>
     </Modal>
 

@@ -176,6 +176,22 @@ export async function publishReleaseApi(payload: PublishReleasePayload) {
   });
 }
 
+export interface StageRemoteReleasePayload {
+  project: string;
+  tag: string;
+  staging_ref: string;
+  assets: string[];
+  manifest: Record<string, unknown>;
+}
+
+export async function stageRemoteReleaseApi(payload: StageRemoteReleasePayload) {
+  const id = requestId();
+  return requestClient.post('/release-storage/stage-remote', payload, {
+    headers: { 'Idempotency-Key': id, 'X-Request-ID': id },
+    responseReturn: 'body',
+  });
+}
+
 export interface RollbackReleasePayload {
   project: string;
   channel: ReleaseChannel;

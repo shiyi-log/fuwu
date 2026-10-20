@@ -10,7 +10,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
 from .administration import administration_store
-from .api import handle_api
+from .api import handle_api, requires_generated_request_id
 from .core import MemoryObjectStore, RBAC, ReleaseError, ReleaseService, S3ObjectStore, SQLiteRepository
 from .storage_settings import build_managed_store
 
@@ -76,10 +76,20 @@ class ApiHandler(BaseHTTPRequestHandler):
         header_request_id = self.headers.get("Idempotency-Key") or self.headers.get("X-Request-ID")
         request_id = request_identifier(header_request_id)
         try:
-            body = self._body() if self.command in {"POST", "PATCH"} else {}
             parsed = urlsplit(self.path)
+            # Generate before reading a sensitive body.  Keep URL parsing in
+            # this guarded block so malformed request targets still receive a
+            # structured error instead of terminating the handler thread.
+            if requires_generated_request_id(parsed.path):
+                request_id = "req-" + os.urandom(12).hex()
+            # DELETE requests are parsed too so the shared dispatcher can
+            # enforce the endpoint's empty-body contract.  Previously the
+            # lightweight adapter discarded a DELETE body before dispatch,
+            # which made a malformed revoke request look valid.
+            body = self._body() if self.command in {"POST", "PATCH", "DELETE"} else {}
             body_request_id = None if parsed.path == "/api/settings/storage" else body.get("requestId")
-            request_id = request_identifier(header_request_id or str(body_request_id or request_id))
+            if not requires_generated_request_id(parsed.path):
+                request_id = request_identifier(header_request_id or str(body_request_id or request_id))
             status, response = handle_api(self.service, self.rbac, method=self.command, path=parsed.path,
                 query={key: values[0] for key, values in parse_qs(parsed.query).items()}, body=body,
                 authorization=self.headers.get("Authorization"), request_id=request_id,
@@ -93,6 +103,7 @@ class ApiHandler(BaseHTTPRequestHandler):
     do_GET = _dispatch
     do_POST = _dispatch
     do_PATCH = _dispatch
+    do_DELETE = _dispatch
 
 
 def serve(host: str | None = None, port: int | None = None) -> None:

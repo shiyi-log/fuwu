@@ -10,17 +10,17 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 源码版本 | `0.0.3` 正式发布；`v0.0.3` 固定提交 `566603e` |
+| 源码版本 | `0.0.4` 待发布；`v0.0.3` 为上一版固定提交 `566603e` |
 | 版本格式 | 三段数字，每段一位；`0.0.9` 后进位为 `0.1.0` |
 | 后端 | Python 3.14、uv、轻量 HTTP 服务、Django 适配器 |
 | 前端 | Vben Admin 5.7.0、Vue 3、Ant Design Vue |
 | 前端工具 | Node.js 22.18.0、pnpm 10.33.0 |
 | 业务数据 | 当前使用 SQLite；MySQL/Redis repository adapter 尚未实现 |
 | 对象存储 | 可替换接口；S3 兼容 provider 使用 AWS SigV4 |
-| 发布基线 | GitHub `main` 与本地分支已对齐；`v0.0.3` 固定提交 `566603e` |
-| 本机部署证据 | 本机 Compose 无缓存重建 API/前端 `0.0.3` 镜像，运行代码与正式发布提交一致；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API 健康、登录和前端访问通过 |
+| 发布基线 | 本次变更目标为 GitHub `main` 的 `v0.0.4`；上一版 `v0.0.3` 固定提交 `566603e` |
+| 本机部署证据 | 上一版 `0.0.3` 的 Compose 验收已记录；`0.0.4` 的本机重建和运行验证待完成 |
 | 云端部署证据 | 本次仅核对 GitHub 仓库与本机 Compose；云端主机和外部服务状态未检查 |
-| 远端引用 | GitHub `main` 已对齐；`v0.0.3` 标签和 GitHub Release 已由 CD 工作流创建；云端部署仍需单独验收 |
+| 远端引用 | `v0.0.3` 标签和 GitHub Release 已由 CD 工作流创建；`v0.0.4` 发布待完成；云端部署仍需单独验收 |
 
 ## 里程碑
 
@@ -32,6 +32,7 @@
 | M3 | 项目导航、发行管理、日志、系统设置与构建说明 | 本地实现完成；浏览器验收需单独记录 |
 | M4 | Docker Compose 构建及健康检查 | 本机 `0.0.3` 发布基线镜像无缓存重建；API、前端和 MySQL 健康检查通过，Redis 运行中但未配置健康检查；账号登录也已本地验证 |
 | M5 | 清理公开仓库全部可达历史和发行元数据 | `main` 已对齐；`v0.0.3` 标签和 GitHub Release 已创建，云端部署仍需单独验收 |
+| M6 | GitHub 项目授权、远端 Release staging、根目录配置和成员管理 | 本地实现与 102 项后端测试、Django 检查、迁移漂移检查、编译和前端 typecheck/build 已完成；待精确提交的 CI/CD 和 Release 核对 |
 
 ## API 文档登记
 
@@ -44,6 +45,8 @@
 | 存储任务 | `/api/release-storage/status`、`/publish`、`/rollback`、`/audit` | 分别为 `read`、`publish`、`rollback` 权限；回滚需超级管理员确认 | staging 引用、不可变发行、latest 指针和审计 | 请求冲突、存储校验失败及恢复待核对均使用固定错误 | `fuwu_service/core.py`、`tests/test_publish_consistency.py` |
 | 操作日志 | `GET /api/logs` | `logs.read` 和项目范围 | 结构化操作记录 | 固定查询错误；不记录请求正文或令牌 | `fuwu_service/administration.py`、`tests/test_management_api.py` |
 | 系统设置 | `GET/PATCH /api/settings`、`PATCH /api/settings/storage` | 登录查询；更改需 `settings.manage`；凭据配置还需超级管理员和安全连接 | 通用偏好、非敏感存储目标及服务端凭据配置 | 凭据未进入响应、数据库或日志 | `fuwu_service/storage_settings.py`、`release_api/urls.py`、`tests/test_storage_settings.py` |
+| GitHub 项目授权 | `/api/projects/{id}/github-authorization` | `projects.manage` 和项目范围；写操作需安全连接 | 校验 GitHub 账号及项目仓库访问；只返回安全身份元数据 | PAT 不进入数据库、日志或 API 响应；撤销授权删除服务端记录 | `fuwu_service/github_auth.py`、`fuwu_service/api.py`、`tests/test_github_authorization_api.py` |
+| 远端发行 staging | `POST /api/release-storage/stage-remote` | `release.storage.publish`；项目下载使用项目授权 | GitHub Release 资产、SHA256SUMS 与 manifest 校验后生成受保护 staging | 只允许 GitHub HTTPS 域名；失败清理临时目录；不更新 latest | `fuwu_service/core.py`、`tests/test_remote_stage.py` |
 | 更新器读取 | 对象存储 HTTPS `GET .../latest.json` | 匿名只读 | 渠道 latest 指向不可变 v1 manifest | 客户端验证 SHA256 后暂存 | `fuwu_service/core.py`、兼容性测试 |
 
 详细字段、请求样例、权限、错误码与行为见 [API 接口文档](docs/API.md)。尚未生成独立 OpenAPI schema。
@@ -86,10 +89,12 @@
 2. 完成中文文档与 CI 文档检查，执行本地后端测试、Django 与迁移检查。
 3. 在保留 `0.0.3` Docker 内容的清理候选中清理路径和历史元数据，并逐 ref 扫描。
 4. 复核 `v0.0.3` Release 资产并完成云端部署和真实对象存储的独立验收。
+5. 完成 `0.0.4` 精确提交的 CI/CD、GitHub Release 资产校验和受控远端下载验证。
 
 ## 变更日志
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-10-21 | 完成 `0.0.4` 的 GitHub 项目授权、远端 Release staging、根目录配置和成员管理实现，待验证与发布 |
 | 2026-10-21 | 完成 `v0.0.3` 正式发布：标签固定 `566603e`，CD run `39484401604` 创建 GitHub Release；云端主机状态未检查 |
 | 2026-10-20 | 补充中文公开台账、准确 API 契约、凭据安全边界和验证记录；历史清理仍待远端审计 |

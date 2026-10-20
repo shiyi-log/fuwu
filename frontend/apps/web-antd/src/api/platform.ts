@@ -11,6 +11,14 @@ export interface ProjectRecord {
   created_at?: string;
 }
 
+export interface GithubAuthorization {
+  authorized: boolean;
+  login?: string | null;
+  node_id?: string | null;
+  scopes?: string[];
+  authorizedAt?: string | null;
+}
+
 export interface AccountRecord {
   id: string;
   username: string;
@@ -85,6 +93,18 @@ export function createProjectApi(data: Pick<ProjectRecord, 'description' | 'id' 
 
 export function updateProjectApi(id: string, data: Partial<Pick<ProjectRecord, 'active' | 'build_instructions' | 'description' | 'name' | 'public_api'>>) {
   return requestClient.request(`/projects/${encodeURIComponent(id)}`, { data, method: 'PATCH', responseReturn: 'body' });
+}
+
+export function getGithubAuthorizationApi(id: string) {
+  return requestClient.get<GithubAuthorization>(`/projects/${encodeURIComponent(id)}/github-authorization`, { responseReturn: 'body' });
+}
+
+export function authorizeGithubApi(id: string, token: string) {
+  return requestClient.post<GithubAuthorization>(`/projects/${encodeURIComponent(id)}/github-authorization`, { token }, { responseReturn: 'body' });
+}
+
+export function revokeGithubAuthorizationApi(id: string) {
+  return requestClient.request<GithubAuthorization>(`/projects/${encodeURIComponent(id)}/github-authorization`, { method: 'DELETE', responseReturn: 'body' });
 }
 
 export async function listAccountsApi() {

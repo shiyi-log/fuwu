@@ -1,0 +1,10 @@
+{
+  "superadmin": {
+    "username": "admin",
+    "displayName": "超级管理员",
+    "passwordEnv": "FUWU_SUPERADMIN_PASSWORD"
+  },
+  "github": {
+    "credentialFile": "secrets/github_accounts.json"
+  }
+}

@@ -437,19 +437,24 @@ def main(argv: list[str] | None = None) -> int:
             super().error("unsupported command or arguments")
 
     parser = SafeArgumentParser(description="fuwu 账号初始化工具（不接收明文密码参数）")
-    parser.add_argument("command", choices=["bootstrap"])
+    parser.add_argument("command", choices=["bootstrap", "bootstrap-config"])
     parser.add_argument("--database", default=None, help="账号与发行共用的 SQLite 文件")
+    parser.add_argument("--config", default=None, help="项目根目录配置文件（bootstrap-config 使用）")
     args = parser.parse_args(argv)
     try:
-        username = input("首个超级管理员用户名：").strip()
-        display_name = input("显示名称（留空使用用户名）：").strip()
-        password = getpass.getpass("管理员密码（12 至 256 字符）：")
-        confirmation = getpass.getpass("再次输入密码：")
-        if not hmac.compare_digest(password.encode(), confirmation.encode()):
-            print("初始化失败：两次密码不一致")
-            return 1
-        with AccountStore(args.database) as store:
-            store.bootstrap_superadmin(username, password, display_name)
+        if args.command == "bootstrap-config":
+            from .runtime_config import bootstrap_from_config
+            bootstrap_from_config(args.database, config=args.config)
+        else:
+            username = input("首个超级管理员用户名：").strip()
+            display_name = input("显示名称（留空使用用户名）：").strip()
+            password = getpass.getpass("管理员密码（12 至 256 字符）：")
+            confirmation = getpass.getpass("再次输入密码：")
+            if not hmac.compare_digest(password.encode(), confirmation.encode()):
+                print("初始化失败：两次密码不一致")
+                return 1
+            with AccountStore(args.database) as store:
+                store.bootstrap_superadmin(username, password, display_name)
         print("首个超级管理员已创建；请通过账号密码登录。")
         return 0
     except (ReleaseError, EOFError, KeyboardInterrupt) as error:

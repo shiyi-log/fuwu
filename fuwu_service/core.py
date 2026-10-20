@@ -15,6 +15,7 @@ import json
 import mimetypes
 import os
 import re
+import shutil
 import sqlite3
 import stat
 import threading
@@ -486,6 +487,48 @@ _S3_OPENER = urllib.request.build_opener(_NoRedirectHandler())
 def _open_s3_url(request: urllib.request.Request, *, timeout: float):
     """Open an S3 request without forwarding signed headers across redirects."""
     return _S3_OPENER.open(request, timeout=timeout)
+
+
+def _github_url(value: Any, *, api: bool = False) -> str:
+    if not isinstance(value, str):
+        raise ReleaseError("remote_asset_invalid", "remote release asset URL is invalid", 422)
+    try:
+        parsed = urllib.parse.urlsplit(value)
+    except ValueError:
+        raise ReleaseError("remote_asset_invalid", "remote release asset URL is invalid", 422) from None
+    allowed_hosts = {"api.github.com"} if api else {"github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com"}
+    try:
+        port = parsed.port
+    except ValueError:
+        raise ReleaseError("remote_asset_invalid", "remote release asset URL is invalid", 422) from None
+    if parsed.scheme != "https" or parsed.hostname not in allowed_hosts or parsed.username or parsed.password or port not in (None, 443):
+        raise ReleaseError("remote_asset_invalid", "remote release asset URL is invalid", 422)
+    return value
+
+
+class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _github_url(newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and urllib.parse.urlsplit(req.full_url).netloc != urllib.parse.urlsplit(newurl).netloc:
+            redirected.remove_header("Authorization")
+        return redirected
+
+
+def _read_limited(response: Any, maximum: int) -> bytes:
+    """Bound metadata/asset reads and reject truncation instead of staging it."""
+    try:
+        declared_length = response.headers.get("Content-Length")
+        if declared_length is not None and int(declared_length) > maximum:
+            raise ReleaseError("remote_asset_too_large", "remote release response is too large", 413)
+    except (AttributeError, TypeError, ValueError):
+        # A malformed or absent length is handled by the bounded read below;
+        # it must never turn into an unbounded allocation.
+        pass
+    body = response.read(maximum + 1)
+    if len(body) > maximum:
+        raise ReleaseError("remote_asset_too_large", "remote release response is too large", 413)
+    return body
 
 
 class SQLiteRepository:
@@ -1063,6 +1106,139 @@ class ReleaseService:
     def publish(self, request: Mapping[str, Any], *, actor: str, request_id: str) -> tuple[int, dict[str, Any]]:
         with self._mutation_lock:
             return self._publish(request, actor=actor, request_id=request_id)
+
+    def stage_remote_release(self, request: Mapping[str, Any], *, actor: str, request_id: str,
+                             github_token: str | None = None, project_id: str | None = None) -> tuple[int, dict[str, Any]]:
+        """Download a GitHub release into a protected staging job.
+
+        Remote bytes are always put through the existing ``publish`` validation
+        path.  The optional token is supplied by a server-side authorization
+        store; it is intentionally not accepted as part of ``request``.
+        """
+        with self._mutation_lock:
+            return self._stage_remote_release(request, actor=actor, request_id=request_id,
+                                              github_token=github_token, project_id=project_id)
+
+    def _stage_remote_release(
+        self,
+        request: Mapping[str, Any],
+        *,
+        actor: str,
+        request_id: str,
+        github_token: str | None = None,
+        project_id: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        allowed = {"repository", "tag", "staging_ref", "assets", "manifest"}
+        if not isinstance(request, Mapping) or set(request) - allowed or not isinstance(request.get("repository"), str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]):
+            raise ReleaseError("invalid_remote_stage_request", "remote staging request is invalid", 422)
+        tag = request.get("tag")
+        job_ref = request.get("staging_ref")
+        assets = request.get("assets")
+        manifest = request.get("manifest")
+        if not isinstance(tag, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) or not isinstance(job_ref, str) or not JOB_RE.fullmatch(job_ref):
+            raise ReleaseError("invalid_remote_stage_request", "remote staging request is invalid", 422)
+        if not isinstance(assets, list) or not assets or len(assets) != len(set(assets)) or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", name) for name in assets):
+            raise ReleaseError("invalid_remote_stage_request", "remote asset list is invalid", 422)
+        if not isinstance(manifest, Mapping):
+            raise ReleaseError("invalid_remote_stage_request", "remote manifest is required", 422)
+        manifest, manifest_entries = validate_manifest(manifest, {"tag": tag})
+        manifest_repository = _project_value(normalize_repository, manifest.get("repository"))
+        if manifest_repository != request["repository"].lower():
+            raise ReleaseError("manifest_mismatch", "manifest repository does not match request", 422)
+        # Remote staging writes each selected asset at the job root.  Require
+        # manifest paths to be the same safe filenames so publish cannot later
+        # look for an uncreated nested path or silently collapse two names.
+        manifest_names = {entry["path"] for entry in manifest_entries}
+        if manifest_names != set(assets):
+            raise ReleaseError("manifest_mismatch", "remote assets do not match manifest", 422)
+        if github_token is not None and (not isinstance(github_token, str) or not github_token.strip() or len(github_token) > 512):
+            raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
+        job_dir = protected_job_path(self.staging_dir, job_ref)
+        if job_dir.exists():
+            raise ReleaseError("staging_conflict", "staging job already exists", 409)
+        api = _github_url(f"https://api.github.com/repos/{request['repository']}/releases/tags/{tag}", api=True)
+        opener = urllib.request.build_opener(_GitHubRedirectHandler())
+        headers = {"Accept": "application/vnd.github+json", "User-Agent": "fuwu-release-storage"}
+        if github_token:
+            headers["Authorization"] = "Bearer " + github_token.strip()
+        req = urllib.request.Request(api, headers=headers)
+        try:
+            with opener.open(req, timeout=30) as response:
+                release = json.loads(_read_limited(response, 2_000_000))
+        except (OSError, urllib.error.URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ReleaseError("remote_release_unavailable", "remote release metadata is unavailable", 502) from None
+        if not isinstance(release, Mapping) or release.get("tag_name") != tag or release.get("draft") or release.get("prerelease"):
+            raise ReleaseError("remote_release_invalid", "remote release is not publishable", 422)
+        remote_assets = release.get("assets")
+        if not isinstance(remote_assets, list):
+            raise ReleaseError("remote_release_invalid", "remote release assets are invalid", 422)
+        by_name: dict[str, Any] = {}
+        for item in remote_assets:
+            if isinstance(item, Mapping) and isinstance(item.get("name"), str):
+                by_name[item["name"]] = item.get("browser_download_url")
+        for name in assets:
+            if name not in by_name:
+                raise ReleaseError("remote_asset_missing", "remote release asset is missing", 422)
+            _github_url(by_name[name])
+        checksum_name = "SHA256SUMS"
+        if checksum_name not in by_name or not isinstance(by_name[checksum_name], str):
+            raise ReleaseError("remote_checksums_missing", "remote release SHA256SUMS is missing", 422)
+        _github_url(by_name[checksum_name])
+        if any(name not in by_name or not isinstance(by_name[name], str) for name in assets):
+            raise ReleaseError("remote_asset_missing", "remote release asset is missing", 422)
+        job_dir.mkdir(mode=0o700)
+        try:
+            download_headers = {"Accept": "application/octet-stream", "User-Agent": "fuwu-release-storage"}
+            if github_token:
+                download_headers["Authorization"] = "Bearer " + github_token.strip()
+            for name in assets:
+                target = job_dir / name
+                download = urllib.request.Request(by_name[name], headers=download_headers)
+                with opener.open(download, timeout=120) as response:
+                    target.write_bytes(_read_limited(response, 1_500_000_000))
+                target.chmod(0o600)
+            checksum_req = urllib.request.Request(by_name[checksum_name], headers=download_headers)
+            with opener.open(checksum_req, timeout=30) as response:
+                try:
+                    upstream_sums = _read_limited(response, 2_000_000).decode("utf-8")
+                except UnicodeDecodeError:
+                    raise ReleaseError("remote_checksums_invalid", "remote SHA256SUMS is invalid", 422) from None
+            upstream: dict[str, str] = {}
+            for line in upstream_sums.splitlines():
+                parts = line.strip().split(maxsplit=1)
+                if len(parts) == 2 and re.fullmatch(r"[0-9a-fA-F]{64}", parts[0]):
+                    name = Path(parts[1].lstrip("*")).name
+                    if name in upstream:
+                        raise ReleaseError("remote_checksums_invalid", "remote SHA256SUMS contains duplicate assets", 422)
+                    upstream[name] = parts[0].lower()
+            if any(name not in upstream for name in assets):
+                raise ReleaseError("remote_checksums_invalid", "remote SHA256SUMS does not cover selected assets", 422)
+            checksums = []
+            for name in assets:
+                body = (job_dir / name).read_bytes()
+                digest = hashlib.sha256(body).hexdigest()
+                if digest != upstream[name]:
+                    raise ReleaseError("remote_checksum_mismatch", "remote asset checksum does not match SHA256SUMS", 422)
+                declared = next(entry for entry in manifest_entries if Path(entry["path"]).name == name)
+                if declared.get("sha256") and declared["sha256"].lower() != digest:
+                    raise ReleaseError("remote_checksum_mismatch", "remote asset checksum does not match manifest", 422)
+                if declared.get("size") is not None and declared["size"] != len(body):
+                    raise ReleaseError("remote_size_mismatch", "remote asset size does not match manifest", 422)
+                checksums.append(f"{digest}  {name}")
+            manifest_path = job_dir / "manifest.json"
+            manifest_path.write_text(json.dumps(dict(manifest), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            manifest_path.chmod(0o600)
+            sums_path = job_dir / "SHA256SUMS"
+            sums_path.write_text("\n".join(checksums) + "\n", encoding="utf-8")
+            sums_path.chmod(0o600)
+        except ReleaseError:
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise
+        except (OSError, urllib.error.URLError):
+            shutil.rmtree(job_dir, ignore_errors=True)
+            raise ReleaseError("remote_asset_unavailable", "remote release asset is unavailable", 502) from None
+        self.repository.audit_event("remote_stage", project_id=project_id, version=None, channel=None, actor=actor, request_id=request_id, details={"repository": request["repository"], "tag": tag, "staging_ref": job_ref, "assets": assets})
+        return 201, {"status": "staged", "job": {"id": request_id, "status": "staged", "progress": 100}, "staging_ref": job_ref}
 
     def _publish(self, request: Mapping[str, Any], *, actor: str, request_id: str) -> tuple[int, dict[str, Any]]:
         allowed = {"project", "channel", "version", "tag", "revision", "staging_ref", "job_ref", "requestId"}

@@ -50,9 +50,11 @@
 | `GET`、`POST` | `/api/projects` | 已登录查询；创建需 `projects.manage` 和全项目范围 | 200、201 |
 | `GET` | `/api/projects/{id}` | 项目范围 | 200 |
 | `PATCH` | `/api/projects/{id}` | `projects.manage` 和项目范围 | 200 |
+| `GET`、`POST`、`DELETE` | `/api/projects/{id}/github-authorization` | `projects.manage` 和项目范围；写入需安全连接 | 200 |
 | `GET` | `/api/releases` | `release.storage.read` 和项目范围 | 200 |
 | `GET` | `/api/release-storage/status` | `release.storage.read` 和项目范围 | 200 |
 | `POST` | `/api/release-storage/publish` | `release.storage.publish` 和项目范围 | 201；幂等重放为 200 |
+| `POST` | `/api/release-storage/stage-remote` | `release.storage.publish` | 201；按项目授权下载 GitHub Release 资产到受保护 staging job |
 | `POST` | `/api/release-storage/rollback` | `release.storage.rollback`、项目范围和超级管理员 | 200 |
 | `GET` | `/api/release-storage/audit` | `release.storage.read` 和项目范围 | 200 |
 | `GET` | `/api/logs` | `logs.read` 和项目范围 | 200 |
@@ -62,7 +64,7 @@
 
 ## 登录与账号
 
-首次管理员必须在服务所在机器通过交互命令创建，详见[部署说明](DEPLOYMENT.md)。服务不提供默认账号或默认密码。登录成功响应包含 `accessToken`、`expiresAt` 和公开用户资料；会话有效期为一小时，服务仅持久化会话摘要。密码以 PBKDF2 哈希保存。
+首次管理员必须在服务所在机器通过 `bootstrap-config`（从环境变量读取密码）或交互命令创建，详见[部署说明](DEPLOYMENT.md)。根目录配置文件只提供非敏感用户名和密码环境变量名；服务不提供默认密码。登录成功响应包含 `accessToken`、`expiresAt` 和公开用户资料；会话有效期为一小时，服务仅持久化会话摘要。密码以 PBKDF2 哈希保存。
 
 用户名为小写的 3 至 64 位字母、数字、点、下划线或连字符，首位必须为字母或数字。密码长度为 12 至 256 个字符且不能全为空白。未知账号、错误密码、停用账号和登录限速统一返回 `401 unauthorized`。
 
@@ -87,6 +89,8 @@
 
 `PATCH /api/projects/{id}` 可更新非空的 `name`、`description`、`public_api`、`build_instructions` 和布尔 `active`。仓库绑定创建后不可修改，已有发行记录不会随项目说明变更而改写。
 
+项目 GitHub 授权通过 `GET`、`POST`、`DELETE /api/projects/{id}/github-authorization` 管理。`POST` 请求仅接受 `{ "token": "..." }`，必须使用 HTTPS（本机回环连接可用于初始化），服务端会先调用 GitHub `/user` 校验账号，再校验该账号能读取项目绑定的 `owner/repo`。响应只包含 `authorized`、`login`、`node_id`、`scopes` 和 `authorizedAt`；令牌只保存在服务端配置的 0600 secrets 文件，不进入 SQLite、操作日志或任何 API 响应。`DELETE` 会撤销该项目的授权。
+
 ## 版本与发行查询
 
 版本由三段数字组成，每段仅一位，范围为 0 至 9。例如 `0.0.9` 的下一版本为 `0.1.0`；`0.0.10` 无效。Git 标签格式为 `v<版本号>`，`revision` 必须是 40 位十六进制 Git SHA。
@@ -98,6 +102,22 @@
 `GET /api/release-storage/audit` 支持 `project` 与 `channel` 查询参数，最多返回最近 100 条发行和指针事件。记录包含事件类型、项目、版本、渠道、操作者、request ID、时间和经筛选的详情。
 
 ## 发布
+
+### 远端 Release staging
+
+`POST /api/release-storage/stage-remote` 支持项目绑定的 GitHub 账号读取私有或公开 Release；未提供 `project` 时仅使用匿名公开访问。提供 `project` 时，服务端只使用该项目已授权的 GitHub 账号，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
+
+```json
+{
+  "project":"heyue",
+  "tag":"v1.0.2",
+  "staging_ref":"job-heyue-102",
+  "assets":["heyue-python-1.0.2.tar.gz","heyue-docker-1.0.2-linux-amd64.tar.gz"],
+  "manifest": {"schemaVersion":1,"repository":"shiyi-log/heyue","version":"1.0.2","tag":"v1.0.2","revision":"...40位 SHA...","releaseId":"...","draft":false,"prerelease":false,"assets":{"docker":[],"python":[]}}
+}
+```
+
+成功响应只返回 job 标识和状态；资产内容、凭据和远端响应不会写入日志。
 
 `POST /api/release-storage/publish` 只接受受保护的 staging/job 引用；拒绝任意路径、对象存储 URL、凭据、文件上传和未知字段。
 
@@ -154,13 +174,13 @@
 
 | HTTP 状态 | 错误码 | 含义 |
 | --- | --- | --- |
-| 400 | `confirmation_required`、`secure_transport_required` | 缺少二次确认或连接不安全 |
+| 400 | `confirmation_required`、`secure_transport_required`、`superadmin_password_required` | 缺少二次确认、连接不安全或配置初始化密码未提供 |
 | 401 | `unauthorized` | 会话无效、过期或认证失败 |
 | 403 | `forbidden` | 权限或项目范围不足 |
 | 404 | `not_found`、`project_not_found`、`release_not_found` | 目标不存在 |
-| 409 | `release_conflict`、`immutable_object_conflict`、`idempotency_conflict` | 发行、对象或幂等冲突 |
-| 422 | `invalid_query`、`invalid_manifest`、`invalid_publish_request`、`invalid_storage_settings` | 请求或发行数据无效 |
-| 502 | `storage_verification_failed` | 对象校验未通过 |
+| 409 | `release_conflict`、`immutable_object_conflict`、`idempotency_conflict`、`project_repository_mismatch` | 发行、对象、幂等或项目仓库绑定冲突 |
+| 422 | `invalid_query`、`invalid_manifest`、`invalid_publish_request`、`invalid_storage_settings`、`invalid_github_token`、`github_token_invalid`、`github_repository_access_denied`、`remote_checksum_mismatch` | 请求、授权或发行数据无效 |
+| 502 | `storage_verification_failed`、`remote_release_unavailable`、`github_unavailable` | 对象校验未通过或 GitHub 服务不可用 |
 | 503 | `pointer_reconciliation_required`、`credential_storage_unavailable` | 指针需人工核对或凭据安全存储不可用 |
 
 其他领域错误仍使用固定错误码和安全消息，不包含存储凭据、私有路径或未知输入值。

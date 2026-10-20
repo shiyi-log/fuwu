@@ -1,6 +1,6 @@
 services:
   api:
-    image: fuwu-api:${FUWU_IMAGE_TAG:-0.0.3}
+    image: fuwu-api:${FUWU_IMAGE_TAG:-0.0.4}
     build:
       context: .
       dockerfile: Dockerfile
@@ -19,6 +19,7 @@ services:
       FUWU_S3_ENDPOINT: ${FUWU_S3_ENDPOINT:-https://s3.your-region-1.amazonaws.com}
       FUWU_S3_TIMEOUT: ${FUWU_S3_TIMEOUT:-300}
       FUWU_AUTH_TOKENS: ${FUWU_AUTH_TOKENS:-{}}
+      FUWU_GITHUB_CREDENTIALS_FILE: ${FUWU_GITHUB_CREDENTIALS_FILE:-/data/private/github_accounts.json}
       FUWU_ALLOW_ROLLBACK_NON_SUPERADMIN: ${FUWU_ALLOW_ROLLBACK_NON_SUPERADMIN:-0}
     ports:
       - "${FUWU_PORT:-8000}:8000"
@@ -37,7 +38,7 @@ services:
       retries: 10
 
   frontend:
-    image: fuwu-frontend:${FUWU_IMAGE_TAG:-0.0.3}
+    image: fuwu-frontend:${FUWU_IMAGE_TAG:-0.0.4}
     build:
       context: ./frontend
       dockerfile: Dockerfile

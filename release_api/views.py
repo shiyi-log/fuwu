@@ -9,7 +9,7 @@ from functools import lru_cache
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 
-from fuwu_service.api import handle_api
+from fuwu_service.api import handle_api, requires_generated_request_id
 from fuwu_service.core import RBAC, ReleaseError, ReleaseService, SQLiteRepository
 from fuwu_service.server import build_storage, request_identifier
 
@@ -24,10 +24,13 @@ def get_service() -> ReleaseService:
 @csrf_exempt
 def api_view(request, **_kwargs):
     header_request_id = request.headers.get("Idempotency-Key") or request.headers.get("X-Request-ID")
-    request_id = request_identifier(header_request_id)
+    request_id = "req-" + os.urandom(12).hex() if requires_generated_request_id(request.path) else request_identifier(header_request_id)
     try:
         body = {}
-        if request.method in {"POST", "PATCH"}:
+        # Keep DELETE body handling aligned with the lightweight adapter.  The
+        # project GitHub revoke endpoint accepts an empty body only; parsing
+        # here prevents a token or malformed JSON from being silently ignored.
+        if request.method in {"POST", "PATCH", "DELETE"}:
             if len(request.body) > 65536:
                 raise ReleaseError("request_too_large", "request body is too large", 413)
             try:
@@ -37,7 +40,8 @@ def api_view(request, **_kwargs):
             if not isinstance(body, dict):
                 raise ReleaseError("invalid_json", "request body is invalid", 400)
         body_request_id = None if request.path == "/api/settings/storage" else body.get("requestId")
-        request_id = request_identifier(header_request_id or str(body_request_id or request_id))
+        if not requires_generated_request_id(request.path):
+            request_id = request_identifier(header_request_id or str(body_request_id or request_id))
         if request.path == "/healthz":
             status, payload = 200, {"status": "ok"}
         else:

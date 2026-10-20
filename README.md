@@ -24,7 +24,16 @@ uv run --frozen python -m fuwu_service.accounts bootstrap --database "$FUWU_DATA
 FUWU_HOST=127.0.0.1 FUWU_PORT=8000 uv run --frozen fuwu-server
 ```
 
-管理员初始化为交互式流程，只需对新数据库执行一次。健康检查地址为 `http://127.0.0.1:8000/healthz`。本地默认使用 SQLite 和内存对象存储。
+管理员初始化为交互式流程，只需对新数据库执行一次。仓库根目录的 `fuwu.config.json` 内置首个超级管理员的非敏感配置；如需按该配置初始化，可将密码放在配置指定的环境变量中，再执行：
+
+```bash
+export FUWU_SUPERADMIN_PASSWORD='请在部署环境中设置的强密码'
+uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FUWU_DATABASE"
+```
+
+密码不会写入配置文件、数据库、日志或 API 响应；也可以继续使用上面的交互式 `bootstrap` 命令。健康检查地址为 `http://127.0.0.1:8000/healthz`。本地默认使用 SQLite 和内存对象存储。
+
+超级管理员登录后可在“账号管理”中注册成员、配置角色/权限和项目范围、停用账号及重置成员密码；成员可在个人资料中使用当前密码修改自己的密码。密码、角色、权限、项目范围和停用状态变更会撤销受影响账号的现有会话。
 
 前端在另一终端启动：
 
@@ -59,6 +68,8 @@ Compose 可启动 MySQL 与 Redis 服务，但当前业务数据仍保存在 SQL
 ## 存储凭据
 
 系统设置允许超级管理员通过安全连接保存对象存储凭据。凭据保存在服务端 root 所有、权限为 `0600` 的独立文件中；Bucket、区域、Endpoint 和前缀等非敏感配置保存在数据库。API 仅返回配置状态和受限权限用户可见的 Access Key 脱敏提示，不返回 Secret Access Key 或 Session Token。环境变量或云平台 IAM role 也可提供服务端凭据。客户端发行下载始终使用匿名 HTTPS。
+
+项目设置还支持按项目授权 GitHub Personal Access Token。服务端只接受安全连接中的令牌，校验 GitHub 账号及项目仓库读取权限后，将令牌写入 `fuwu.config.json` 指定的 `0600` secrets 文件（可用 `FUWU_GITHUB_CREDENTIALS_FILE` 覆盖路径）；令牌不写入 SQLite、响应或日志。远端 Release staging 会使用对应项目授权读取私有 Release，并校验远端 `SHA256SUMS` 后再进入普通发布流程。
 
 ## 文档
 

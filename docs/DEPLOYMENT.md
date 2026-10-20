@@ -25,6 +25,15 @@ export FUWU_STAGING_DIR="$PWD/data/staging"
 uv run --frozen python -m fuwu_service.accounts bootstrap --database "$FUWU_DATABASE"
 ```
 
+仓库根目录的 `fuwu.config.json` 保存首个超级管理员的用户名、显示名称和密码环境变量名称，不保存密码本身。也可以通过配置文件初始化：
+
+```bash
+export FUWU_SUPERADMIN_PASSWORD='部署环境中的强密码'
+uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FUWU_DATABASE"
+```
+
+该命令只允许在空账号库中创建一次超级管理员；成员注册、停用和密码重置由登录后的超级管理员在“账号管理”页面执行，接口权限为 `users.manage`。
+
 启动轻量 API 服务：
 
 ```bash
@@ -79,6 +88,12 @@ docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts
 ```
 
 默认前端端口为 `3331`，API 端口为 `8000`，数据存于 Compose 命名卷。API 容器同时挂载受保护的 secrets 目录，只读。对外提供服务时，应使用 HTTPS 反向代理并将管理 API 限制在可信网络内。
+
+### 项目 GitHub 授权
+
+项目设置中的“GitHub 账号授权”接受 Personal Access Token。服务会通过 GitHub API 校验账号身份和项目绑定仓库的读取权限，令牌只写入 `fuwu.config.json` 指定的 secrets 文件（默认 `secrets/github_accounts.json`）；该文件及父目录必须分别为 `0600` 和 `0700`，并加入部署主机的秘密管理或持久化卷。也可以使用 `FUWU_GITHUB_CREDENTIALS_FILE` 指向容器外挂载的 secrets 文件。令牌不会进入 SQLite、审计日志、API 响应或前端构建产物。
+
+只有拥有 `projects.manage` 且具备该项目范围的账号可以新增、查看或撤销项目授权。提交令牌的请求必须使用 HTTPS；本机回环连接仅适合初始化。远端 Release staging 会按项目绑定仓库读取公开或私有 Release，并继续校验远端 `SHA256SUMS` 与 manifest。
 
 Compose 启动 MySQL 和 Redis 作为可选部署服务；当前发行、账号、设置与审计仓库仍使用 SQLite。Django migration 仅管理 Django 自有模型，不会迁移发行领域数据。接入其他数据库前必须实现对应仓库适配器、迁移、备份与历史数据读回测试。
 

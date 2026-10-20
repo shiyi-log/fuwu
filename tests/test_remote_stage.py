@@ -1,0 +1,155 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import tempfile
+import unittest
+import urllib.error
+from pathlib import Path
+from unittest.mock import patch
+
+from fuwu_service.core import MemoryObjectStore, ReleaseError, ReleaseService, SQLiteRepository, _GitHubRedirectHandler
+
+
+class _Response:
+    def __init__(self, body: bytes):
+        self.body = body
+        self.headers = {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, _limit: int = -1) -> bytes:
+        return self.body
+
+
+class _Opener:
+    def __init__(self, release: dict, assets: dict[str, bytes], *, fail_asset: str | None = None):
+        self.release = release
+        self.assets = assets
+        self.fail_asset = fail_asset
+        self.requests = []
+
+    def open(self, request, timeout=0):
+        self.requests.append((request, timeout))
+        if request.full_url.startswith("https://api.github.com/"):
+            return _Response(json.dumps(self.release).encode())
+        name = request.full_url.rsplit("/", 1)[-1]
+        if name == self.fail_asset:
+            raise urllib.error.URLError("asset unavailable")
+        return _Response(self.assets[name])
+
+
+class RemoteStageTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        root = Path(self.directory.name)
+        self.service = ReleaseService(SQLiteRepository(root / "db.sqlite3"), MemoryObjectStore(), staging_dir=root / "staging")
+        self.addCleanup(self.service.repository.conn.close)
+        self.addCleanup(self.directory.cleanup)
+        self.body = b"remote release payload"
+        self.digest = hashlib.sha256(self.body).hexdigest()
+        self.manifest = {
+            "schemaVersion": 1,
+            "repository": "owner/repository",
+            "version": "0.0.1",
+            "tag": "v0.0.1",
+            "revision": "a" * 40,
+            "releaseId": "release-1",
+            "draft": False,
+            "prerelease": False,
+            "assets": {"python": {"path": "package.tar.gz", "sha256": self.digest, "size": len(self.body)}},
+        }
+        self.release = {
+            "tag_name": "v0.0.1",
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {"name": "package.tar.gz", "browser_download_url": "https://github.com/owner/repository/releases/download/v0.0.1/package.tar.gz"},
+                {"name": "SHA256SUMS", "browser_download_url": "https://github.com/owner/repository/releases/download/v0.0.1/SHA256SUMS"},
+            ],
+        }
+
+    def _request(self, **overrides):
+        value = {"repository": "owner/repository", "tag": "v0.0.1", "staging_ref": "remote-job", "assets": ["package.tar.gz"], "manifest": self.manifest}
+        value.update(overrides)
+        return value
+
+    def test_stage_downloads_with_server_token_and_publish_consumes_staging(self) -> None:
+        sums = f"{self.digest}  package.tar.gz\n".encode()
+        opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": sums})
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            status, staged = self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-1", github_token="ghs-test-token")
+        self.assertEqual(status, 201)
+        self.assertEqual(staged["staging_ref"], "remote-job")
+        api_request = opener.requests[0][0]
+        asset_request = opener.requests[1][0]
+        self.assertEqual(api_request.get_header("Authorization"), "Bearer ghs-test-token")
+        self.assertEqual(asset_request.get_header("Authorization"), "Bearer ghs-test-token")
+        job = Path(self.directory.name) / "staging" / "remote-job"
+        self.assertEqual((job / "package.tar.gz").read_bytes(), self.body)
+        self.assertEqual((job / "SHA256SUMS").read_text(), f"{self.digest}  package.tar.gz\n")
+        status, published = self.service.publish({"project": "remote", "version": "0.0.1", "channel": "stable", "staging_ref": "remote-job"}, actor="admin", request_id="publish-1")
+        self.assertEqual(status, 201)
+        self.assertEqual(published["status"], "published")
+        events = self.service.repository.list_audit()
+        self.assertNotIn("ghs-test-token", json.dumps(events))
+
+    def test_request_cannot_supply_github_token(self) -> None:
+        with self.assertRaisesRegex(ReleaseError, "remote staging request is invalid") as error:
+            self.service.stage_remote_release({**self._request(), "github_token": "sensitive"}, actor="admin", request_id="stage-invalid")
+        self.assertEqual(error.exception.code, "invalid_remote_stage_request")
+
+    def test_failed_asset_download_removes_partial_job(self) -> None:
+        first_body = b"first"
+        first_digest = hashlib.sha256(first_body).hexdigest()
+        manifest = {**self.manifest, "assets": {"python": [
+            self.manifest["assets"]["python"],
+            {"path": "first.tar.gz", "sha256": first_digest, "size": len(first_body)},
+        ]}}
+        release = {**self.release, "assets": [
+            {"name": "first.tar.gz", "browser_download_url": "https://github.com/owner/repository/releases/download/v0.0.1/first.tar.gz"},
+            {"name": "package.tar.gz", "browser_download_url": "https://github.com/owner/repository/releases/download/v0.0.1/package.tar.gz"},
+            {"name": "SHA256SUMS", "browser_download_url": "https://github.com/owner/repository/releases/download/v0.0.1/SHA256SUMS"},
+        ]}
+        sums = f"{first_digest}  first.tar.gz\n{self.digest}  package.tar.gz\n".encode()
+        opener = _Opener(release, {"first.tar.gz": first_body, "package.tar.gz": self.body, "SHA256SUMS": sums}, fail_asset="package.tar.gz")
+        request = self._request(assets=["first.tar.gz", "package.tar.gz"], manifest=manifest)
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(ReleaseError, "remote release asset is unavailable"):
+                self.service.stage_remote_release(request, actor="admin", request_id="stage-fail")
+        self.assertFalse((Path(self.directory.name) / "staging" / "remote-job").exists())
+
+    def test_invalid_redirect_host_is_rejected_before_following(self) -> None:
+        request = type("Request", (), {"full_url": "https://github.com/owner/repository/releases/download/v0.0.1/package.tar.gz"})()
+        with self.assertRaisesRegex(ReleaseError, "remote release asset URL is invalid"):
+            _GitHubRedirectHandler().redirect_request(request, None, 302, "Found", {}, "https://evil.example/download")
+
+    def test_invalid_upstream_checksum_is_rejected_and_job_is_removed(self) -> None:
+        opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": ("0" * 64 + "  package.tar.gz\n").encode()})
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(ReleaseError, "remote asset checksum does not match"):
+                self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-checksum")
+        self.assertFalse((Path(self.directory.name) / "staging" / "remote-job").exists())
+
+    def test_duplicate_upstream_checksum_entries_are_rejected(self) -> None:
+        sums = f"{self.digest}  package.tar.gz\n{self.digest}  package.tar.gz\n".encode()
+        opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": sums})
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(ReleaseError, "remote SHA256SUMS contains duplicate assets"):
+                self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-duplicate")
+        self.assertFalse((Path(self.directory.name) / "staging" / "remote-job").exists())
+
+    def test_invalid_upstream_metadata_encoding_is_safe(self) -> None:
+        opener = _Opener(self.release, {})
+        opener.open = lambda request, timeout=0: _Response(b"\xff")  # type: ignore[method-assign]
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            with self.assertRaisesRegex(ReleaseError, "remote release metadata is unavailable"):
+                self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-encoding")
+
+
+if __name__ == "__main__":
+    unittest.main()
