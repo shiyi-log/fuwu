@@ -1,0 +1,74 @@
+services:
+  api:
+    image: fuwu-api:${FUWU_IMAGE_TAG:-0.0.3}
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uv", "run", "--frozen", "--no-dev", "fuwu-server"]
+    environment:
+      FUWU_HOST: 0.0.0.0
+      FUWU_PORT: 8000
+      FUWU_DATABASE: /data/fuwu.sqlite3
+      FUWU_STAGING_DIR: /data/staging
+      AWS_CREDENTIALS_FILE: /run/secrets/aws_credentials
+      FUWU_STORAGE: ${FUWU_STORAGE:-memory}
+      FUWU_S3_BUCKET: ${FUWU_S3_BUCKET:-your-bucket}
+      FUWU_S3_REGION: ${FUWU_S3_REGION:-your-region-1}
+      FUWU_S3_PREFIX: ${FUWU_S3_PREFIX:-releases}
+      FUWU_S3_PUBLIC_READS: ${FUWU_S3_PUBLIC_READS:-1}
+      FUWU_S3_ENDPOINT: ${FUWU_S3_ENDPOINT:-https://s3.your-region-1.amazonaws.com}
+      FUWU_S3_TIMEOUT: ${FUWU_S3_TIMEOUT:-300}
+      FUWU_AUTH_TOKENS: ${FUWU_AUTH_TOKENS:-{}}
+      FUWU_ALLOW_ROLLBACK_NON_SUPERADMIN: ${FUWU_ALLOW_ROLLBACK_NON_SUPERADMIN:-0}
+    ports:
+      - "${FUWU_PORT:-8000}:8000"
+    volumes:
+      - fuwu-data:/data
+      - ./secrets:/run/secrets:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  frontend:
+    image: fuwu-frontend:${FUWU_IMAGE_TAG:-0.0.3}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "${FRONTEND_PORT:-3331}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  mysql:
+    image: mysql:8.4
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-fuwu}
+      MYSQL_USER: ${MYSQL_USER:-fuwu}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-change-me}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-change-me-root}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+
+volumes:
+  fuwu-data:
+  mysql-data:
+  redis-data:

@@ -1,0 +1,13 @@
+.env
+secrets/*
+!secrets/.gitkeep
+*.sqlite3
+*.sqlite3-*
+staging/
+frontend/node_modules/
+frontend/dist/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.idea/
+frontend/apps/backend-mock/.env

@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "project": "sample-app",
+  "channel": "stable",
+  "version": "0.0.1",
+  "tag": "v0.0.1",
+  "revision": "0123456789abcdef0123456789abcdef01234567",
+  "manifestKey": "releases/sample-app/v0.0.1/manifest.json",
+  "manifestSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  "immutable": true,
+  "verificationSource": "release-storage"
+}

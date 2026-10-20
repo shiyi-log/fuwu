@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_call:
+    inputs:
+      source_ref:
+        description: "Exact source commit selected by the calling workflow"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  documentation:
+    name: Documentation checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Check Markdown structure
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(README.md PROJECT_LEDGER.md docs/API.md docs/DEPLOYMENT.md docs/PUBLISH_CONSISTENCY.md docs/VERSION_HISTORY.md docs/releases/*.md)
+          for file in "${files[@]}"; do
+            test -f "$file" || { echo "Missing required documentation: $file" >&2; exit 1; }
+            grep -q '^# ' "$file" || { echo "Missing H1 heading: $file" >&2; exit 1; }
+            fences=$(grep -c '^```' "$file" || true)
+            test "$((fences % 2))" -eq 0 || { echo "Unclosed code fence: $file" >&2; exit 1; }
+          done
+
+      - name: Check whitespace and repository state
+        run: git diff --check
+
+  python-and-django:
+    name: Python and Django checks
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.14"]
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install project dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          if [[ -f uv.lock ]]; then
+            python -m pip install uv
+            uv sync --frozen --all-extras
+          elif [[ -f pyproject.toml ]]; then
+            python -m pip install -e ".[dev]" || python -m pip install -e .
+          elif [[ -f requirements-dev.txt ]]; then
+            python -m pip install -r requirements-dev.txt
+          elif [[ -f requirements.txt ]]; then
+            python -m pip install -r requirements.txt
+          else
+            echo "No Python dependency manifest yet; continuing with the repository baseline."
+          fi
+
+      - name: Compile Python sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          if find . -type f -name '*.py' -not -path './.git/*' | grep -q .; then
+            uv run --frozen python -m compileall -q .
+          else
+            echo "No Python source yet; compile check deferred until the Django project is initialized."
+          fi
+
+      - name: Run Django checks and migration checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f manage.py ]]; then
+            uv run --frozen python manage.py check
+            uv run --frozen python manage.py makemigrations --check --dry-run
+            uv run --frozen python manage.py migrate --plan
+          else
+            echo "No manage.py yet; Django checks deferred until the Django project is initialized."
+          fi
+
+      - name: Run tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f manage.py ]]; then
+            uv run --frozen python manage.py test
+          fi
+          if find tests . -maxdepth 4 -type f \( -name 'test_*.py' -o -name '*_test.py' \) -not -path './.git/*' | grep -q .; then
+            uv run --frozen python -m unittest discover -s tests -p 'test_*.py' -v
+          elif [[ ! -f manage.py ]]; then
+            echo "No test suite yet; test execution deferred until the project is initialized."
+          fi
+
+  frontend-vben:
+    name: Vben frontend checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install Vben dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Typecheck web-antd
+        working-directory: frontend
+        run: pnpm --filter @vben/web-antd typecheck
+
+      - name: Build web-antd
+        working-directory: frontend
+        run: pnpm --filter @vben/web-antd build

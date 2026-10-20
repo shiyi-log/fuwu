@@ -1,0 +1,228 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ref to validate; publishing requires an existing numeric version tag"
+        required: true
+        default: "main"
+      publish:
+        description: "Create a GitHub Release after validation"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve immutable source and release tag
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+    permissions:
+      contents: read
+    steps:
+      - name: Check out selected source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve source and validate release version
+        id: source
+        env:
+          REQUESTED_REF: ${{ inputs.ref || github.ref }}
+          SHOULD_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse --verify 'HEAD^{commit}')
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Source must resolve to an exact 40-character commit SHA." >&2; exit 1; }
+          release_tag=""
+          if [[ "$SHOULD_PUBLISH" == "true" ]]; then
+            release_tag="${REQUESTED_REF#refs/tags/}"
+            [[ "$release_tag" =~ ^v[0-9]\.[0-9]\.[0-9]$ ]] || { echo "Publishing requires an existing tag such as v0.0.1." >&2; exit 1; }
+            tag_sha=$(git rev-parse --verify "refs/tags/${release_tag}^{commit}")
+            [[ "$tag_sha" == "$source_sha" ]] || { echo "The release tag must identify the selected source commit." >&2; exit 1; }
+            version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+            [[ "$release_tag" == "v$version" ]] || { echo "The release tag must match pyproject.toml project.version." >&2; exit 1; }
+          fi
+          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+
+  ci-status:
+    name: Find successful CI for the exact source
+    needs: resolve
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      reused: ${{ steps.evidence.outputs.reused }}
+      run_url: ${{ steps.evidence.outputs.run_url }}
+      run_id: ${{ steps.evidence.outputs.run_id }}
+    steps:
+      - name: Inspect this repository's main push CI evidence
+        id: evidence
+        uses: actions/github-script@v7
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        with:
+          script: |
+            const sha = process.env.SOURCE_SHA;
+            if (!/^[0-9a-f]{40}$/.test(sha)) {
+              throw new Error('CI evidence requires an exact source SHA.');
+            }
+            const repository = `${context.repo.owner}/${context.repo.repo}`;
+            const { data: workflow } = await github.rest.actions.getWorkflow({
+              ...context.repo, workflow_id: 'ci.yml',
+            });
+            if (workflow.path !== '.github/workflows/ci.yml') {
+              throw new Error('CI workflow identity did not match.');
+            }
+            const runs = await github.paginate(github.rest.actions.listWorkflowRuns, {
+              ...context.repo, workflow_id: workflow.id,
+              event: 'push', branch: 'main', head_sha: sha,
+              status: 'completed', per_page: 100,
+            });
+            const matching = runs.filter(run =>
+              run.workflow_id === workflow.id &&
+              run.path?.split('@')[0] === '.github/workflows/ci.yml' &&
+              run.repository?.full_name === repository &&
+              run.head_repository?.full_name === repository &&
+              run.event === 'push' && run.head_branch === 'main' &&
+              run.head_sha === sha && run.status === 'completed' &&
+              run.conclusion === 'success'
+            ).sort((left, right) => right.id - left.id);
+            const run = matching[0];
+            core.setOutput('reused', run ? 'true' : 'false');
+            core.setOutput('run_url', run?.html_url || '');
+            core.setOutput('run_id', run?.id || '');
+            await core.summary
+              .addHeading('Exact-source CI evidence')
+              .addRaw(`Source: \`${sha}\`\n\n`)
+              .addRaw(run
+                ? `Reusing successful push/main CI: [run ${run.id}](${run.html_url}). No test/typecheck/build rerun is needed.\n`
+                : 'No matching successful push/main CI was found. Reusable CI must pass before packaging.\n')
+              .write();
+
+  verify:
+    name: Run CI when no reusable evidence exists
+    needs: [resolve, ci-status]
+    if: >-
+      needs.resolve.result == 'success' &&
+      needs.ci-status.result == 'success' &&
+      needs.ci-status.outputs.reused == 'false'
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ needs.resolve.outputs.source_sha }}
+    permissions:
+      contents: read
+
+  package:
+    name: Package source
+    needs: [resolve, ci-status, verify]
+    if: >-
+      always() &&
+      needs.resolve.result == 'success' &&
+      needs.ci-status.result == 'success' &&
+      (needs.verify.result == 'success' ||
+        (needs.verify.result == 'skipped' && needs.ci-status.outputs.reused == 'true'))
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Build source archive and checksums
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          mkdir -p dist
+          archive="dist/fuwu-${SOURCE_SHA}.tar.gz"
+          git archive --format=tar.gz --output="$archive" "$SOURCE_SHA"
+          (cd dist && sha256sum "$(basename "$archive")" > SHA256SUMS)
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuwu-${{ needs.resolve.outputs.source_sha }}
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub Release
+    needs: [resolve, ci-status, verify, package]
+    if: >-
+      always() &&
+      needs.resolve.result == 'success' &&
+      needs.ci-status.result == 'success' &&
+      needs.package.result == 'success' &&
+      (needs.verify.result == 'success' ||
+        (needs.verify.result == 'skipped' && needs.ci-status.outputs.reused == 'true')) &&
+      ((github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
+        (github.event_name == 'workflow_dispatch' && inputs.publish == true))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Download verified source package
+        uses: actions/download-artifact@v4
+        with:
+          name: fuwu-${{ needs.resolve.outputs.source_sha }}
+          path: dist/
+
+      - name: Recheck release tag and package checksums
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ "$RELEASE_TAG" =~ ^v[0-9]\.[0-9]\.[0-9]$ ]]
+          [[ "$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")" == "$SOURCE_SHA" ]]
+          test -f "dist/fuwu-${SOURCE_SHA}.tar.gz"
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes_file="docs/releases/${RELEASE_TAG#v}.md"
+          release_notes_args=(--generate-notes)
+          if [[ -f "$notes_file" ]]; then
+            release_notes_args=(--notes-file "$notes_file")
+          fi
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --target "$SOURCE_SHA" \
+            --title "$RELEASE_TAG" \
+            "${release_notes_args[@]}"
