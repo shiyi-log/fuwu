@@ -11,3 +11,5 @@ __pycache__/
 *.egg-info/
 .idea/
 frontend/apps/backend-mock/.env
+.history-*
+.history*
