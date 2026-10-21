@@ -12,6 +12,7 @@ import { defineStore } from 'pinia';
 
 import { getAccessCodesApi, getUserInfoApi, loginApi, logoutApi } from '#/api';
 import { $t } from '#/locales';
+import { sanitizeRedirectPath } from '#/router/redirect';
 
 export const useAuthStore = defineStore('auth', () => {
   const accessStore = useAccessStore();
@@ -53,11 +54,14 @@ export const useAuthStore = defineStore('auth', () => {
         if (accessStore.loginExpired) {
           accessStore.setLoginExpired(false);
         } else {
+          const redirectPath =
+            sanitizeRedirectPath(router.currentRoute.value.query.redirect) ??
+            sanitizeRedirectPath(userInfo.homePath) ??
+            sanitizeRedirectPath(preferences.app.defaultHomePath) ??
+            '/';
           onSuccess
             ? await onSuccess?.()
-            : await router.push(
-                userInfo.homePath || preferences.app.defaultHomePath,
-              );
+            : await router.push(redirectPath);
         }
 
         if (userInfo?.realName) {
@@ -73,6 +77,11 @@ export const useAuthStore = defineStore('auth', () => {
       // containing passwords/session headers must not reach Vue diagnostics.
       accessStore.setAccessToken(null);
       userStore.setUserInfo(null);
+      notification.error({
+        description: '登录失败，请检查账号密码或服务连接',
+        duration: 3,
+        message: '登录失败',
+      });
     } finally {
       loginLoading.value = false;
     }
@@ -91,15 +100,34 @@ export const useAuthStore = defineStore('auth', () => {
     resetAllStores();
     accessStore.setLoginExpired(false);
 
-    // 回登录页带上当前路由地址
+    const redirectPath = sanitizeRedirectPath(router.currentRoute.value.fullPath);
+    const defaultPath = sanitizeRedirectPath(preferences.app.defaultHomePath);
     await router.replace({
       path: LOGIN_PATH,
       query: redirect
-        ? {
-            redirect: encodeURIComponent(router.currentRoute.value.fullPath),
-          }
+        && redirectPath && redirectPath !== defaultPath
+        ? { redirect: redirectPath }
         : {},
     });
+  }
+
+  async function handleSessionExpired() {
+    if (router.currentRoute.value.path === LOGIN_PATH) {
+      resetAllStores();
+      accessStore.setLoginExpired(false);
+      return;
+    }
+
+    accessStore.setAccessToken(null);
+    if (
+      preferences.app.loginExpiredMode === 'modal' &&
+      accessStore.isAccessChecked
+    ) {
+      accessStore.setLoginExpired(true);
+      return;
+    }
+
+    await logout();
   }
 
   async function fetchUserInfo() {
@@ -116,6 +144,7 @@ export const useAuthStore = defineStore('auth', () => {
     $reset,
     authLogin,
     fetchUserInfo,
+    handleSessionExpired,
     loginLoading,
     logout,
   };

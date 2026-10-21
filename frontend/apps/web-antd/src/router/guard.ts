@@ -9,6 +9,7 @@ import { accessRoutes, coreRouteNames } from '#/router/routes';
 import { useAuthStore } from '#/store';
 
 import { generateAccess } from './access';
+import { sanitizeRedirectPath } from './redirect';
 
 /**
  * 通用守卫配置
@@ -52,12 +53,20 @@ function setupAccessGuard(router: Router) {
 
     // 基本路由，这些路由不需要进入权限拦截
     if (coreRouteNames.includes(to.name as string)) {
-      if (to.path === LOGIN_PATH && accessStore.accessToken) {
-        return decodeURIComponent(
-          (to.query?.redirect as string) ||
-            userStore.userInfo?.homePath ||
-            preferences.app.defaultHomePath,
-        );
+      if (to.path === LOGIN_PATH) {
+        const redirectPath =
+          sanitizeRedirectPath(to.query?.redirect) ??
+          sanitizeRedirectPath(userStore.userInfo?.homePath) ??
+          sanitizeRedirectPath(preferences.app.defaultHomePath) ??
+          '/';
+
+        if (accessStore.accessToken) {
+          return redirectPath;
+        }
+
+        if (to.query?.redirect && !sanitizeRedirectPath(to.query.redirect)) {
+          return { path: LOGIN_PATH, replace: true };
+        }
       }
       return true;
     }
@@ -70,14 +79,16 @@ function setupAccessGuard(router: Router) {
       }
 
       // 没有访问权限，跳转登录页面
-      if (to.fullPath !== LOGIN_PATH) {
+      if (to.path !== LOGIN_PATH) {
+        const redirectPath = sanitizeRedirectPath(to.fullPath);
         return {
           path: LOGIN_PATH,
           // 如不需要，直接删除 query
           query:
-            to.fullPath === preferences.app.defaultHomePath
-              ? {}
-              : { redirect: encodeURIComponent(to.fullPath) },
+            redirectPath &&
+            redirectPath !== preferences.app.defaultHomePath
+              ? { redirect: redirectPath }
+              : {},
           // 携带当前跳转的页面，登录后重新跳转该页面
           replace: true,
         };
@@ -107,15 +118,17 @@ function setupAccessGuard(router: Router) {
     accessStore.setAccessMenus(accessibleMenus);
     accessStore.setAccessRoutes(accessibleRoutes);
     accessStore.setIsAccessChecked(true);
-    const redirectPath = (from.query.redirect ??
-      (to.path === preferences.app.defaultHomePath
-        ? userInfo.homePath || preferences.app.defaultHomePath
-        : to.fullPath)) as string;
+    const redirectPath =
+      sanitizeRedirectPath(from.query.redirect) ??
+      sanitizeRedirectPath(
+        to.path === preferences.app.defaultHomePath
+          ? userInfo.homePath || preferences.app.defaultHomePath
+          : to.fullPath,
+      ) ??
+      sanitizeRedirectPath(preferences.app.defaultHomePath) ??
+      '/';
 
-    return {
-      ...router.resolve(decodeURIComponent(redirectPath)),
-      replace: true,
-    };
+    return { ...router.resolve(redirectPath), replace: true };
   });
 }
 

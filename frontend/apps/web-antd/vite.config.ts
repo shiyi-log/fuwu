@@ -5,12 +5,13 @@ export default defineConfig(async () => {
     application: {},
     vite: {
       server: {
+        port: 1122,
         proxy: {
           '/api': {
             changeOrigin: true,
             rewrite: (path) => path.replace(/^\/api/, ''),
             // fuwu Django API
-            target: 'http://localhost:8000/api',
+            target: 'http://localhost:1123/api',
             ws: true,
           },
         },
