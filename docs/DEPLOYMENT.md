@@ -91,9 +91,9 @@ docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts
 
 ### GitHub 账号授权应该在系统设置里完成
 
-项目设置中的“GitHub 账号授权”接受 Personal Access Token。服务会通过 GitHub API 校验账号身份和项目绑定仓库的读取权限，令牌只写入 `fuwu.config.json` 指定的 secrets 文件（默认 `secrets/github_accounts.json`）；该文件及父目录必须分别为 `0600` 和 `0700`，并加入部署主机的秘密管理或持久化卷。也可以使用 `FUWU_GITHUB_CREDENTIALS_FILE` 指向容器外挂载的 secrets 文件。令牌不会进入 SQLite、审计日志、API 响应或前端构建产物。
+系统设置中的全局“GitHub 账号授权”接受 Personal Access Token。服务会通过 GitHub API 校验账号身份；远端 staging 时再按项目登记的仓库读取 Release。令牌只写入 `fuwu.config.json` 指定的 secrets 文件（默认 `secrets/github_accounts.json`）；该文件及父目录必须分别为 `0600` 和 `0700`，并加入部署主机的秘密管理或持久化卷。也可以使用 `FUWU_GITHUB_CREDENTIALS_FILE` 指向容器外挂载的 secrets 文件。令牌不会进入 SQLite、审计日志、API 响应或前端构建产物。
 
-只有拥有 `projects.manage` 且具备该项目范围的账号可以新增、查看或撤销项目授权。提交令牌的请求必须使用 HTTPS；本机回环连接仅适合初始化。远端 Release staging 会按项目绑定仓库读取公开或私有 Release，并继续校验远端 `SHA256SUMS` 与 manifest。
+只有拥有 `settings.manage` 的账号可以查看全局授权；提交或撤销令牌还必须使用 HTTPS，本机回环连接仅适合初始化。远端 Release staging 需要 `release.storage.publish`，按请求项目绑定仓库读取公开或私有 Release，并继续校验远端 `SHA256SUMS` 与 manifest。授权接口为 `GET/POST/DELETE /api/settings/github-authorization`；令牌不得放入项目请求、发布请求或日志。
 
 Compose 启动 MySQL 和 Redis 作为可选部署服务；当前发行、账号、设置与审计仓库仍使用 SQLite。Django migration 仅管理 Django 自有模型，不会迁移发行领域数据。接入其他数据库前必须实现对应仓库适配器、迁移、备份与历史数据读回测试。
 

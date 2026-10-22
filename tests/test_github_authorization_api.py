@@ -18,7 +18,7 @@ django.setup()
 
 from fuwu_service.accounts import get_account_store
 from fuwu_service.api import handle_api
-from fuwu_service.core import MemoryObjectStore, RBAC, ReleaseService, SQLiteRepository
+from fuwu_service.core import MemoryObjectStore, RBAC, ReleaseError, ReleaseService, SQLiteRepository
 from fuwu_service.server import ApiHandler
 from fuwu_service import accounts as account_module, administration as administration_module
 
@@ -35,10 +35,6 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         self.environment.start()
         self.accounts = get_account_store()
         self.admin = self.accounts.bootstrap_superadmin("admin", "Strong-Admin-Password-2026", "管理员")
-        self.manager = self.accounts.create_user(self.admin["id"], {
-            "username": "manager", "displayName": "项目经理", "password": "Strong-Manager-Password-2026",
-            "roles": ["viewer"], "permissions": ["projects.manage"], "project_ids": ["alpha"],
-        })
         self.viewer = self.accounts.create_user(self.admin["id"], {
             "username": "viewer", "displayName": "只读用户", "password": "Strong-Viewer-Password-2026",
             "roles": ["viewer"], "project_ids": ["alpha"],
@@ -72,47 +68,47 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         self.assertEqual(status, 200, response)
         return response["data"]["accessToken"]
 
-    def test_project_scoped_authorization_does_not_expose_token(self):
+    def test_global_authorization_does_not_expose_token(self):
         admin_token = self.login("admin", "Strong-Admin-Password-2026")
-        manager_token = self.login("manager", "Strong-Manager-Password-2026")
         secret = "github_pat_secret_value"
         identity = {"login": "release-bot", "node_id": "MDQ6VXNlcjE=", "scopes": ["repo"]}
+        permission_check = {"repository": "shiyi-log/heyue", "contents": "read", "metadata": "read", "readOnly": True}
         with patch("fuwu_service.api.verify_github_token", return_value=identity) as verify, \
-             patch("fuwu_service.api.verify_github_repository_access") as verify_repo:
-            status, response = self.call("POST", "/api/projects/alpha/github-authorization", token=manager_token, body={"token": secret})
+             patch("fuwu_service.api.verify_github_repository_access", return_value=permission_check) as verify_repo:
+            status, response = self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": secret})
         self.assertEqual(status, 200, response)
         self.assertNotIn(secret, json.dumps(response))
         verify.assert_called_once_with(secret)
-        verify_repo.assert_called_once_with(secret, "owner/alpha")
-        self.assertEqual(self.call("GET", "/api/projects/alpha/github-authorization", token=manager_token)[1]["login"], "release-bot")
-        self.assertEqual(self.call("GET", "/api/projects/beta/github-authorization", token=manager_token)[0], 403)
-        self.assertEqual(self.call("POST", "/api/projects/beta/github-authorization", token=manager_token, body={"token": secret})[0], 403)
-        status, response = self.call("DELETE", "/api/projects/alpha/github-authorization", token=admin_token)
+        verify_repo.assert_called_once_with(secret, "shiyi-log/heyue")
+        self.assertEqual(response["permissionCheck"], permission_check)
+        self.assertEqual(self.call("GET", "/api/settings/github-authorization", token=admin_token)[1]["login"], "release-bot")
+        status, response = self.call("DELETE", "/api/settings/github-authorization", token=admin_token)
         self.assertEqual((status, response["authorized"]), (200, False))
         self.assertNotIn(secret, json.dumps(response))
         raw = (self.root / "private" / "github.json").read_text(encoding="utf-8")
         self.assertNotIn(secret, raw)
-        audit = self.service.repository.list_audit("alpha")
+        audit = self.service.repository.list_audit()
         self.assertTrue(any(item["event_type"] == "github_authorized" for item in audit))
         self.assertTrue(all(secret not in json.dumps(item) for item in audit))
 
-    def test_authorization_requires_projects_manage_and_rejects_extra_fields(self):
-        manager_token = self.login("manager", "Strong-Manager-Password-2026")
+    def test_authorization_requires_settings_manage_and_rejects_extra_fields(self):
+        admin_token = self.login("admin", "Strong-Admin-Password-2026")
         viewer_token = self.login("viewer", "Strong-Viewer-Password-2026")
-        self.assertEqual(self.call("GET", "/api/projects/alpha/github-authorization", token=viewer_token)[0], 403)
-        self.assertEqual(self.call("DELETE", "/api/projects/alpha/github-authorization", token=viewer_token)[0], 403)
+        for method in ("GET", "POST", "DELETE"):
+            with self.subTest(method=method):
+                self.assertEqual(self.call(method, "/api/settings/github-authorization", token=viewer_token, body={"token": "github_pat_secret"} if method == "POST" else None)[0], 403)
         insecure_status, insecure_response = handle_api(
-            self.service, self.rbac, method="POST", path="/api/projects/alpha/github-authorization", query={},
-            body={"token": "github_pat_secret"}, authorization="Bearer " + manager_token,
+            self.service, self.rbac, method="POST", path="/api/settings/github-authorization", query={},
+            body={"token": "github_pat_secret"}, authorization="Bearer " + admin_token,
             request_id="token-canary", client_id="test-client", request_secure=False,
         )
         self.assertEqual((insecure_status, insecure_response["code"]), (400, "secure_transport_required"))
         self.assertNotEqual(insecure_response["request_id"], "token-canary")
         self.assertNotIn("token-canary", json.dumps(administration_module.administration_store().logs()))
-        status, response = self.call("POST", "/api/projects/alpha/github-authorization", token=manager_token, body={"token": "github_pat_secret", "login": "leak"})
+        status, response = self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": "github_pat_secret", "login": "leak"})
         self.assertEqual(status, 422)
         self.assertEqual(response["code"], "invalid_github_authorization")
-        self.assertEqual(self.call("GET", "/api/projects/alpha/github-authorization")[0], 401)
+        self.assertEqual(self.call("GET", "/api/settings/github-authorization")[0], 401)
 
     def test_lightweight_adapter_dispatches_secure_delete_and_rejects_a_body(self):
         """The HTTP adapter must preserve the same revoke contract as Django."""
@@ -129,7 +125,7 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         base = "http://127.0.0.1:" + str(server.server_port)
         auth_headers = {"Authorization": "Bearer " + admin_token}
         malformed = urllib.request.Request(
-            base + "/api/projects/alpha/github-authorization",
+            base + "/api/settings/github-authorization",
             data=b"{",
             headers={"X-Request-ID": "token-canary", "Content-Type": "application/json"},
             method="POST",
@@ -142,10 +138,11 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         self.assertNotEqual(malformed_payload["request_id"], "token-canary")
         malformed_error.exception.close()
 
+        permission_check = {"repository": "shiyi-log/heyue", "contents": "read", "metadata": "read", "readOnly": True}
         with patch("fuwu_service.api.verify_github_token", return_value=identity), \
-             patch("fuwu_service.api.verify_github_repository_access"):
+             patch("fuwu_service.api.verify_github_repository_access", return_value=permission_check):
             request = urllib.request.Request(
-                base + "/api/projects/alpha/github-authorization",
+                base + "/api/settings/github-authorization",
                 data=json.dumps({"token": "github_pat_http"}).encode(),
                 headers={**auth_headers, "Content-Type": "application/json"},
                 method="POST",
@@ -154,7 +151,7 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
                 self.assertEqual(response.status, 200)
 
         request = urllib.request.Request(
-            base + "/api/projects/alpha/github-authorization",
+            base + "/api/settings/github-authorization",
             headers=auth_headers,
             method="DELETE",
         )
@@ -165,7 +162,7 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         # DELETE bodies are parsed by the adapter and rejected by handle_api;
         # they must not be silently ignored as an authorization revoke.
         request = urllib.request.Request(
-            base + "/api/projects/alpha/github-authorization",
+            base + "/api/settings/github-authorization",
             data=json.dumps({"token": "github_pat_http"}).encode(),
             headers={**auth_headers, "Content-Type": "application/json"},
             method="DELETE",
@@ -174,6 +171,45 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
             urllib.request.urlopen(request, timeout=5)
         self.assertEqual(error.exception.code, 422)
         error.exception.close()
+
+    def test_failed_repository_permission_check_does_not_replace_existing_authorization(self):
+        admin_token = self.login("admin", "Strong-Admin-Password-2026")
+        existing = "github_pat_existing"
+        replacement = "github_pat_replacement"
+        identity = {"login": "release-bot", "node_id": "MDQ6VXNlcjE=", "scopes": []}
+        permission_check = {"repository": "shiyi-log/heyue", "contents": "read", "metadata": "read", "readOnly": True}
+        with patch("fuwu_service.api.verify_github_token", return_value=identity), \
+             patch("fuwu_service.api.verify_github_repository_access", return_value=permission_check):
+            self.assertEqual(self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": existing})[0], 200)
+        denied = ReleaseError("github_repository_permissions_insufficient", "GitHub token must have read-only repository access", 422)
+        with patch("fuwu_service.api.verify_github_token", return_value=identity), \
+             patch("fuwu_service.api.verify_github_repository_access", side_effect=denied):
+            status, response = self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": replacement})
+        self.assertEqual((status, response["code"]), (422, "github_repository_permissions_insufficient"))
+        self.assertEqual(self.call("GET", "/api/settings/github-authorization", token=admin_token)[1]["login"], "release-bot")
+        raw = (self.root / "private" / "github.json").read_text(encoding="utf-8")
+        self.assertIn(existing, raw)
+        self.assertNotIn(replacement, raw)
+
+    def test_explicit_permission_check_is_read_only_and_does_not_refresh_record(self):
+        admin_token = self.login("admin", "Strong-Admin-Password-2026")
+        secret = "github_pat_secret_check"
+        identity = {"login": "release-bot", "node_id": "MDQ6VXNlcjE=", "scopes": []}
+        permission_check = {"repository": "shiyi-log/heyue", "contents": "read", "metadata": "read", "readOnly": True}
+        with patch("fuwu_service.api.verify_github_token", return_value=identity), \
+             patch("fuwu_service.api.verify_github_repository_access", return_value=permission_check):
+            self.assertEqual(self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": secret})[0], 200)
+        before = self.call("GET", "/api/settings/github-authorization", token=admin_token)[1]
+        with patch("fuwu_service.api.verify_github_token", return_value=identity) as verify, \
+             patch("fuwu_service.api.verify_github_repository_access", return_value=permission_check) as verify_repo:
+            status, response = self.call("POST", "/api/settings/github-authorization/check", token=admin_token)
+        self.assertEqual(status, 200, response)
+        self.assertEqual(response["permissionCheck"], permission_check)
+        self.assertEqual(response["authorized"], True)
+        verify.assert_called_once_with(secret)
+        verify_repo.assert_called_once_with(secret, "shiyi-log/heyue")
+        after = self.call("GET", "/api/settings/github-authorization", token=admin_token)[1]
+        self.assertEqual(after, before)
 
 
 if __name__ == "__main__":

@@ -10,6 +10,7 @@
 | `0.0.2` | 本地标签 `v0.0.2` 与远端 Release 存在；远端历史及说明清理待完成 | 2026-10-20 | SQLite 表初始化幂等；未声明向 MySQL/Redis 迁移 | 增加账号、项目范围、项目导航、日志和服务设置；保持既有 v1 manifest 字段 | Release/PR 元数据只读复核完成；远端资料替换与标签工作流检查待完成 |
 | `0.0.3` | GitHub Release 已发布；`v0.0.3` 固定提交 `566603e` | 2026-10-21 | 保持 SQLite；无生产数据迁移声明 | 增加系统设置中的托管存储配置及项目构建说明；发行读取和 v1 manifest 保持兼容 | GitHub Actions 和 CD 发布工作流全部通过；本机无缓存 Docker 构建、Compose 健康、API 和登录/访问验证通过；云端主机部署、外部存储和生产环境未由此证明 |
 | `0.0.4` | GitHub Release 已发布；`v0.0.4` 固定提交 `cfc2de2` | 2026-10-21 | 保持 SQLite；无生产数据迁移声明 | 增加 GitHub 项目授权、远端 Release staging、根目录配置初始化和成员管理界面；保持既有发布与 v1 manifest 兼容 | 102 项 pytest、80 项子测试、Django/迁移、编译、前端 typecheck/build、CI/CD、Release 资产和源码归档校验通过；真实私有 PAT、对象存储、云端部署和生产验收不由此版本自动证明 |
+| `0.0.6` | 当前 `main` 本地候选 `2a1dcac`；正式 Release 待定 | 2026-10-23 | 保持 SQLite；无数据迁移 | 将 GitHub 授权统一为 `/api/settings/github-authorization` 全局接口；远端 staging、publish 和 v1 manifest 字段保持兼容 | 本地 focused/全量测试、Django check、迁移漂移检查和 diff check 结果单独记录；未由此版本证明真实 PAT、GitHub 私有 Release、对象存储、云端部署或 Heyue 客户端验收 |
 
 ## 0.0.2 变更
 
@@ -30,10 +31,17 @@
 
 ## 0.0.4 变更
 
-- 增加项目级 GitHub Personal Access Token 授权。令牌只保存在服务端受保护的 `0600` 凭据文件中；账号身份元数据可查询，令牌不进入数据库、日志或 API 响应。
+- 增加 GitHub Personal Access Token 授权基础能力。令牌只保存在服务端受保护的 `0600` 凭据文件中；账号身份元数据可查询，令牌不进入数据库、日志或 API 响应。
 - 增加从绑定项目的 GitHub Release 下载资产到受保护 staging job 的流程。支持私有 Release，校验 draft/prerelease、资产路径、远端 `SHA256SUMS`、manifest 摘要和文件大小；下载后仍须通过普通 publish 流程更新 `latest.json`。
 - 增加根目录 `fuwu.config.json`，内置超级管理员用户名、显示名称、密码环境变量名和 GitHub 凭据文件相对路径，不保存明文密码；增加 `bootstrap-config` 初始化命令。
 - 增加超级管理员成员管理界面和 API：成员注册、角色/权限/项目范围维护、账号停用、管理员密码重置；成员可通过 `/api/auth/password` 自行修改密码，相关变更会撤销现有会话。
+
+## 0.0.6 变更
+
+- 将 GitHub 授权统一到系统设置的全局 `GET/POST/DELETE /api/settings/github-authorization`；不再提供项目级 GitHub 授权路由。
+- 远端 Release staging 对带 `project` 的请求使用全局 PAT，并强制 GitHub 仓库与项目登记值一致；不带 `project` 的公开 Release 请求仍使用匿名访问。
+- 全局凭据文件只接受 `{"version":1,"account":...}` 结构；旧项目级或未知顶层结构会 fail closed，不会被误当作空授权。
+- 本版候选不包含真实生产 PAT、对象存储写入、云端部署或 Heyue 客户端验收；这些证据需要单独记录。
 
 ## 升级与发布说明
 

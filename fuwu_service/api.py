@@ -10,7 +10,12 @@ from typing import Any, Mapping
 from . import auth
 from .administration import administration_store
 from .core import PROJECT_RE, RBAC, ReleaseError, ReleaseService, validate_channel
-from .github_auth import get_github_authorization_store, verify_github_repository_access, verify_github_token
+from .github_auth import (
+    get_github_authorization_store,
+    github_required_repository,
+    verify_github_repository_access,
+    verify_github_token,
+)
 from .storage_settings import storage_settings_payload, update_storage_settings
 from .version import __version__
 
@@ -39,7 +44,12 @@ def requires_generated_request_id(path: str) -> bool:
     errors cannot echo an attacker-controlled canary in the response.
     """
 
-    return path in {"/api/settings/storage", "/api/settings/github-authorization", "/api/release-storage/stage-remote"}
+    return path in {
+        "/api/settings/storage",
+        "/api/settings/github-authorization",
+        "/api/settings/github-authorization/check",
+        "/api/release-storage/stage-remote",
+    }
 
 
 def _allowed_project(rbac: RBAC, authorization: str | None, value: Any) -> str:
@@ -259,18 +269,46 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                 store = administration_store()
                 response = update_storage_settings(store, service, body, request_secure=request_secure)
                 code = 200
-        elif path == "/api/settings/github-authorization":
+        elif path in {"/api/settings/github-authorization", "/api/settings/github-authorization/check"}:
             category, action, route = "settings", "github_authorization", path
             rbac.require(authorization, "settings.manage")
             store = _github_authorizations()
-            if method == "GET":
+            if path.endswith("/check"):
+                if method != "POST":
+                    code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
+                else:
+                    if not request_secure:
+                        raise ReleaseError("secure_transport_required", "secure connection is required", 400)
+                    if body:
+                        raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
+                    token = store.get_token()
+                    if token is None:
+                        raise ReleaseError("github_authorization_required", "GitHub account authorization is required", 422)
+                    identity = verify_github_token(token)
+                    permission_check = verify_github_repository_access(token, github_required_repository())
+                    # Return only fixed metadata and persist no new secret.  A
+                    # check of an already-authorized token must not refresh the
+                    # credential record or its timestamp.
+                    code, response = 200, {
+                        "authorized": True,
+                        "login": identity["login"],
+                        "node_id": identity["node_id"],
+                        "scopes": identity["scopes"],
+                        "permissionCheck": permission_check,
+                    }
+            elif method == "GET":
                 code, response = 200, store.get_public()
             elif method == "POST":
                 if not request_secure:
                     raise ReleaseError("secure_transport_required", "secure connection is required", 400)
                 if set(body) != {"token"}:
                     raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
-                identity = verify_github_token(body.get("token"))
+                token = body.get("token")
+                identity = verify_github_token(token)
+                # Verify repository access before writing the token.  A valid
+                # GitHub identity without access to the configured repository
+                # must never replace an existing working authorization.
+                identity["permissionCheck"] = verify_github_repository_access(token, github_required_repository())
                 response = store.authorize(body.get("token"), identity)
                 service.repository.audit_event("github_authorized", project_id=None, version=None, channel=None,
                     actor=actor, request_id=request_id, details={"status": "authorized", "login": response["login"], "scopes": response["scopes"]})

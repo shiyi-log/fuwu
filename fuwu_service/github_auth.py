@@ -23,11 +23,9 @@ from pathlib import Path
 from typing import Any, Mapping, Protocol
 
 from .core import ReleaseError
-from .projects import validate_project_id
-
-
 UTC = dt.timezone.utc
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_REQUIRED_REPOSITORY = "shiyi-log/heyue"
 _TOKEN_MAX_LENGTH = 512
 _LOGIN_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9-]{0,38}$")
 _NODE_ID_RE = re.compile(r"[A-Za-z0-9_+/=-]{1,128}")
@@ -85,6 +83,16 @@ def _validate_scopes(value: Any) -> list[str]:
     if any(len(scope) > 100 or any(ord(char) < 0x21 for char in scope) for scope in result):
         raise ReleaseError("github_identity_invalid", "GitHub identity is invalid", 502)
     return result
+
+
+def github_required_repository(env: Mapping[str, str] | None = None) -> str:
+    """Return the repository whose read-only PAT access is checked on save."""
+
+    env = os.environ if env is None else env
+    value = env.get("FUWU_GITHUB_REQUIRED_REPOSITORY", DEFAULT_REQUIRED_REPOSITORY)
+    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", value.strip()):
+        raise ReleaseError("github_repository_config_invalid", "GitHub repository configuration is invalid", 503)
+    return value.strip()
 
 
 class _Opener(Protocol):
@@ -146,8 +154,15 @@ def verify_github_token(token: str, *, opener: _Opener | None = None, timeout: f
     return {"login": login, "node_id": node_id, "scopes": scopes}
 
 
-def verify_github_repository_access(token: str, repository: str, *, opener: _Opener | None = None, timeout: float = 10.0) -> None:
-    """Require the verified token to read the project's bound repository."""
+def verify_github_repository_access(token: str, repository: str, *, opener: _Opener | None = None, timeout: float = 10.0) -> dict[str, Any]:
+    """Require read-only repository access and return safe check metadata.
+
+    GitHub exposes repository permissions for an authenticated caller.  A
+    fine-grained token with Contents: Read-only has ``pull=true`` and no
+    repository write permission.  Metadata is always read-only for this API;
+    it is recorded as a safe contract marker rather than exposing GitHub's
+    response or the token.
+    """
 
     token = _validate_token(token)
     if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
@@ -173,10 +188,21 @@ def verify_github_repository_access(token: str, repository: str, *, opener: _Ope
         raise ReleaseError("github_unavailable", "GitHub authorization service is unavailable", 502) from None
     if not isinstance(payload, Mapping) or not isinstance(payload.get("full_name"), str) or payload["full_name"].casefold() != repository.casefold():
         raise ReleaseError("github_repository_access_denied", "GitHub account cannot access the project repository", 422)
+    permissions = payload.get("permissions")
+    if not isinstance(permissions, Mapping):
+        raise ReleaseError("github_repository_permissions_insufficient", "GitHub token must have read-only repository access", 422)
+    if permissions.get("pull") is not True or any(permissions.get(name) is True for name in ("push", "admin", "maintain", "triage")):
+        raise ReleaseError("github_repository_permissions_insufficient", "GitHub token must have read-only repository access", 422)
+    return {
+        "repository": repository,
+        "contents": "read",
+        "metadata": "read",
+        "readOnly": True,
+    }
 
 
 class GitHubAuthorizationStore:
-    """Atomic, project-scoped GitHub token store.
+    """Atomic, global GitHub token store.
 
     The file format is deliberately private and versioned.  A missing file is
     treated as an empty store, while malformed or weakly protected files fail
@@ -216,7 +242,10 @@ class GitHubAuthorizationStore:
                 data = json.load(stream)
         except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503) from None
-        if not isinstance(data, Mapping) or data.get("version") != 1:
+        # Accept only the global v1 shape.  In particular, do not silently
+        # treat a former project-scoped ``projects`` file as an empty global
+        # store while leaving its secret on disk.
+        if not isinstance(data, Mapping) or set(data) != {"version", "account"} or data.get("version") != 1:
             raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
         return {"version": 1, "account": data.get("account")}
 
@@ -244,13 +273,6 @@ class GitHubAuthorizationStore:
             raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503) from None
 
     @staticmethod
-    def _project(project_id: Any) -> str:
-        try:
-            return validate_project_id(project_id)
-        except Exception:
-            raise ReleaseError("invalid_project", "project identifier is invalid", 422) from None
-
-    @staticmethod
     def _record(value: Any) -> dict[str, Any]:
         """Validate a record loaded from the private file before using it."""
 
@@ -268,7 +290,23 @@ class GitHubAuthorizationStore:
         authorized_at = value.get("authorizedAt")
         if not isinstance(authorized_at, str) or len(authorized_at) > 64:
             raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
-        return {"token": token, "login": login, "node_id": node_id, "scopes": scopes, "authorizedAt": authorized_at}
+        result = {"token": token, "login": login, "node_id": node_id, "scopes": scopes, "authorizedAt": authorized_at}
+        if "permissionCheck" in value:
+            check = value.get("permissionCheck")
+            if not isinstance(check, Mapping) or set(check) != {"repository", "contents", "metadata", "readOnly"}:
+                raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
+            repository = check.get("repository")
+            if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+                raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
+            if check.get("contents") != "read" or check.get("metadata") != "read" or check.get("readOnly") is not True:
+                raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
+            result["permissionCheck"] = {
+                "repository": repository,
+                "contents": "read",
+                "metadata": "read",
+                "readOnly": True,
+            }
+        return result
 
     def get_token(self) -> str | None:
         """Return a token only for an internal, already-authorized download."""
@@ -285,13 +323,16 @@ class GitHubAuthorizationStore:
             if not isinstance(record, Mapping):
                 return {"authorized": False, "login": None, "node_id": None, "scopes": [], "authorizedAt": None}
             record = self._record(record)
-            return {
+            public = {
                 "authorized": True,
                 "login": record["login"],
                 "node_id": record["node_id"],
                 "scopes": list(record["scopes"]),
                 "authorizedAt": record["authorizedAt"],
             }
+            if "permissionCheck" in record:
+                public["permissionCheck"] = dict(record["permissionCheck"])
+            return public
 
     def authorize(self, token: str, identity: Mapping[str, Any]) -> dict[str, Any]:
         token = _validate_token(token)
@@ -301,6 +342,11 @@ class GitHubAuthorizationStore:
             raise ReleaseError("github_identity_invalid", "GitHub identity is invalid", 502)
         scopes = _validate_scopes(identity.get("scopes", []))
         record = {"token": token, "login": login, "node_id": node_id, "scopes": scopes, "authorizedAt": _timestamp()}
+        if "permissionCheck" in identity:
+            record["permissionCheck"] = self._record({
+                "token": token, "login": login, "node_id": node_id, "scopes": scopes,
+                "authorizedAt": record["authorizedAt"], "permissionCheck": identity.get("permissionCheck"),
+            })["permissionCheck"]
         with self._lock:
             data = self._read()
             self._write({"version": 1, "account": record})

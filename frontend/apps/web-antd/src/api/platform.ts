@@ -17,6 +17,12 @@ export interface GithubAuthorization {
   node_id?: string | null;
   scopes?: string[];
   authorizedAt?: string | null;
+  permissionCheck?: {
+    repository: string;
+    contents: 'read';
+    metadata: 'read';
+    readOnly: boolean;
+  };
 }
 
 export interface AccountRecord {
@@ -71,6 +77,8 @@ export interface ObjectStorageSettings {
   credentialsConfigured: boolean;
   credentialSource: string;
   accessKeyHint?: string | null;
+  secretAccessKeyConfigured?: boolean;
+  sessionTokenConfigured?: boolean;
 }
 
 export interface ObjectStorageSettingsPayload {
@@ -102,6 +110,10 @@ export function getGithubAuthorizationApi() {
 
 export function authorizeGithubApi(token: string) {
   return requestClient.post<GithubAuthorization>('/settings/github-authorization', { token }, { responseReturn: 'body' });
+}
+
+export function checkGithubAuthorizationApi() {
+  return requestClient.post<GithubAuthorization>('/settings/github-authorization/check', {}, { responseReturn: 'body' });
 }
 
 export function revokeGithubAuthorizationApi() {

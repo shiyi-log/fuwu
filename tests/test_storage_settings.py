@@ -70,6 +70,8 @@ class ManagedStorageSettingsTests(unittest.TestCase):
         self.assertEqual(payload["credentialSource"], "managed")
         self.assertEqual(payload["accessKeyHint"], "****1234")
         self.assertTrue(payload["credentialsConfigured"])
+        self.assertTrue(payload["secretAccessKeyConfigured"])
+        self.assertTrue(payload["sessionTokenConfigured"])
         self.assertNotIn(self.body["secretAccessKey"], repr(payload))
         self.assertNotIn(self.body["sessionToken"], repr(payload))
         self.assertNotIn(self.body["accessKeyId"], repr(payload))

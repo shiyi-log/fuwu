@@ -4,7 +4,7 @@ import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useAccess } from '@vben/access';
 import { Page } from '@vben/common-ui';
 import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, message, Select, Space, Spin, Tag } from 'ant-design-vue';
-import { authorizeGithubApi, getGithubAuthorizationApi, getSystemSettingsApi, revokeGithubAuthorizationApi, updateObjectStorageSettingsApi, updateSystemSettingsApi } from '#/api';
+import { authorizeGithubApi, checkGithubAuthorizationApi, getGithubAuthorizationApi, getSystemSettingsApi, revokeGithubAuthorizationApi, updateObjectStorageSettingsApi, updateSystemSettingsApi } from '#/api';
 
 const { hasAccessByCodes } = useAccess();
 const canManage = computed(() => hasAccessByCodes(['settings.manage']));
@@ -12,9 +12,9 @@ const loading = ref(false); const saving = ref(false); const error = ref('');
 const storageSaving = ref(false);
 const model = reactive({ appName: 'fuwu', timezone: 'Asia/Shanghai', defaultChannel: 'stable' as 'beta' | 'stable', logRetentionDays: 90, version: 'unknown' });
 const metadata = ref<Record<string, boolean | null | number | string>>({});
-const storage = reactive({ bucket: '', region: '', endpoint: '', prefix: '', credentialsConfigured: false, credentialSource: '', accessKeyHint: null as string | null });
+const storage = reactive({ bucket: '', region: '', endpoint: '', prefix: '', credentialsConfigured: false, credentialSource: '', accessKeyHint: null as string | null, secretAccessKeyConfigured: false, sessionTokenConfigured: false });
 const credentials = reactive({ accessKeyId: '', secretAccessKey: '', sessionToken: '' });
-const github = ref<GithubAuthorization>(); const githubToken = ref(''); const githubSaving = ref(false);
+const github = ref<GithubAuthorization>(); const githubToken = ref(''); const githubSaving = ref(false); const githubCheckSaving = ref(false);
 const labels: Record<string, string> = { version: '服务版本', provider: '对象存储 Provider', publicReadMode: '公共读取方式', repository: '数据 Repository', singleInstance: '单实例模式' };
 const canSubmitCredentials = computed(() => {
   if (typeof window === 'undefined') return false;
@@ -97,6 +97,12 @@ async function revokeGithub() {
   catch { /* Shared client displays safe server errors. */ }
   finally { githubSaving.value = false; }
 }
+async function checkGithub() {
+  githubCheckSaving.value = true;
+  try { github.value = await checkGithubAuthorizationApi(); message.success('GitHub 仓库读取权限检查完成'); }
+  catch { /* Shared client reports only the server's fixed safe error. */ }
+  finally { githubCheckSaving.value = false; }
+}
 
 onMounted(load);
 onBeforeUnmount(clearCredentials);
@@ -107,13 +113,25 @@ onBeforeUnmount(clearCredentials);
     <Spin :spinning="loading"><div class="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card title="通用配置"><Form layout="vertical"><Form.Item label="服务名称" required><Input v-model:value="model.appName" :disabled="!canManage" :maxlength="120" /></Form.Item><Form.Item label="时区" required><Input v-model:value="model.timezone" :disabled="!canManage" placeholder="Asia/Shanghai" /></Form.Item><Form.Item label="默认发行频道"><Select v-model:value="model.defaultChannel" :disabled="!canManage" :options="[{ value: 'stable', label: 'stable' }, { value: 'beta', label: 'beta' }]" /></Form.Item><Form.Item label="运营日志保留天数"><InputNumber v-model:value="model.logRetentionDays" :disabled="!canManage" :min="7" :max="3650" :precision="0" /></Form.Item><Alert message="保留期只应用于运营日志，不会删除不可变的发行审计。" show-icon type="info" class="mb-4" /><Button v-if="canManage" type="primary" :loading="saving" @click="save">保存设置</Button></Form></Card><Card title="只读运行信息"><Descriptions :column="1" bordered><Descriptions.Item label="服务版本">{{ model.version }}</Descriptions.Item><Descriptions.Item v-for="(value, key) in metadata" :key="key" :label="labels[key] || key">{{ typeof value === 'boolean' ? value ? '是' : '否' : value ?? '—' }}</Descriptions.Item></Descriptions></Card>
       <Card v-if="canManage" title="GitHub 账号授权" class="xl:col-span-2">
         <div class="mb-3 text-sm text-gray-500">授权全局 GitHub 账号后，远端发行下载可以读取 GitHub 仓库的私有 Release。令牌只会发送到服务端并保存在受保护文件中。</div>
-        <div class="mb-3"><Tag :color="github?.authorized ? 'green' : 'default'">{{ github?.authorized ? `已授权：${github.login}` : '未授权' }}</Tag><span v-if="github?.authorizedAt" class="ml-2 text-xs text-gray-400">{{ github.authorizedAt }}</span></div>
+        <div class="mb-3 flex flex-wrap items-center gap-2">
+          <Tag :color="github?.authorized ? 'green' : 'default'">{{ github?.authorized ? `已授权：${github.login}` : '未授权' }}</Tag>
+          <Tag :color="github?.authorized ? 'blue' : 'default'">{{ github?.authorized ? 'Token 已配置（不回显）' : 'Token 未配置' }}</Tag>
+          <span v-if="github?.authorizedAt" class="text-xs text-gray-400">{{ github.authorizedAt }}</span>
+        </div>
+        <div v-if="github?.permissionCheck" class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+          <Tag color="green">可读取：{{ github.permissionCheck.repository }}</Tag>
+          <Tag :color="github.permissionCheck.readOnly ? 'blue' : 'orange'">{{ github.permissionCheck.readOnly ? '账号仓库权限为只读' : '账号对仓库还有写入权限' }}</Tag>
+          <Button type="link" :loading="githubCheckSaving" @click="checkGithub">重新检查仓库权限</Button>
+        </div>
         <Form layout="vertical">
           <Form.Item label="GitHub Personal Access Token">
             <Input.Password v-model:value="githubToken" :maxlength="512" autocomplete="new-password" placeholder="仅用于校验和远端下载，不会回显" />
+            <div class="mt-1 text-xs text-gray-400">{{ github?.authorized ? '当前 Token 已配置；输入框保持为空。重新输入只用于轮换 Token。' : '当前尚未配置 Token。' }}</div>
           </Form.Item>
           <Space>
             <Button type="primary" :loading="githubSaving" @click="saveGithub">授权账号</Button>
+            <Button type="link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">获取 GitHub Token</Button>
+            <Button v-if="github?.authorized" type="default" :loading="githubCheckSaving" @click="checkGithub">检查仓库权限</Button>
             <Button v-if="github?.authorized" danger :loading="githubSaving" @click="revokeGithub">撤销授权</Button>
           </Space>
         </Form>
@@ -127,12 +145,13 @@ onBeforeUnmount(clearCredentials);
             <Form.Item label="S3 兼容 Endpoint"><Input v-model:value="storage.endpoint" :disabled="!canManage" autocomplete="off" placeholder="留空使用 AWS S3 默认地址" /></Form.Item>
             <Form.Item label="对象前缀" required><Input v-model:value="storage.prefix" :disabled="!canManage" autocomplete="off" placeholder="releases" /></Form.Item>
           </div>
-          <div class="mb-3 flex flex-wrap items-center gap-2 text-sm text-gray-500">
-            <span>凭据状态：{{ storage.credentialsConfigured ? '已配置' : '未配置' }}</span>
-            <span v-if="storage.credentialSource">· 来源：{{ storage.credentialSource }}</span>
-            <span v-if="canManage && storage.credentialsConfigured">· Access Key ID：{{ storage.accessKeyHint || '已配置' }}</span>
-            <span v-if="canManage && storage.credentialsConfigured">· Secret Access Key：已配置，不回显</span>
-            <span>· 输入框始终为空，保存后不会回显凭据</span>
+          <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
+            <Tag :color="storage.credentialsConfigured ? 'green' : 'default'">{{ storage.credentialsConfigured ? '凭据已配置' : '凭据未配置' }}</Tag>
+            <span v-if="storage.credentialSource" class="text-gray-500">来源：{{ storage.credentialSource }}</span>
+            <span v-if="canManage" class="text-gray-500">Access Key ID：{{ storage.credentialsConfigured ? (storage.accessKeyHint || '已配置（不回显）') : '未配置' }}</span>
+            <span v-if="canManage" class="text-gray-500">Secret Access Key：{{ storage.secretAccessKeyConfigured ? '已配置（不回显）' : '未配置' }}</span>
+            <span v-if="canManage" class="text-gray-500">Session Token：{{ storage.sessionTokenConfigured ? '已配置（不回显）' : '未配置（可选）' }}</span>
+            <span class="text-gray-500">输入框始终为空；重新输入仅用于轮换，保存后不会回显凭据</span>
           </div>
           <div class="grid grid-cols-1 gap-x-4 md:grid-cols-3">
             <Form.Item label="Access Key ID"><Input v-model:value="credentials.accessKeyId" :disabled="!canManage || !canSubmitCredentials" autocomplete="off" /></Form.Item>

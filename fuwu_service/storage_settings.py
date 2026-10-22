@@ -356,6 +356,12 @@ def storage_settings_payload(
         "credentialsConfigured": credentials is not None,
         "credentialSource": "managed" if managed else ("bootstrap" if credentials is not None else "unavailable"),
         "accessKeyHint": masked_access_key(credentials.access_key) if include_access_key_hint and credentials is not None else None,
+        # These are deliberately boolean status fields.  The credential
+        # values themselves never cross the API boundary, while the UI can
+        # distinguish an intentionally empty input from an unconfigured
+        # deployment.
+        "secretAccessKeyConfigured": credentials is not None,
+        "sessionTokenConfigured": bool(credentials and credentials.session_token),
     }
 
 

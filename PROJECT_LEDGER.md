@@ -1,6 +1,6 @@
 # 项目台账
 
-更新时间：2026-10-22
+更新时间：2026-10-23
 
 ## 项目目标
 
@@ -10,14 +10,14 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 源码版本 | `0.0.5` 开发中；`v0.0.4` 为上一版固定提交 `cfc2de2` |
+| 源码版本 | `0.0.6` 本地候选；当前 `main` 提交 `2a1dcac`；`v0.0.4` 为上一版已记录发布 |
 | 版本格式 | 三段数字，每段一位；`0.0.9` 后进位为 `0.1.0` |
 | 后端 | Python 3.14、uv、轻量 HTTP 服务、Django 适配器 |
 | 前端 | Vben Admin 5.7.0、Vue 3、Ant Design Vue |
 | 前端工具 | Node.js 22.18.0、pnpm 10.33.0 |
 | 业务数据 | 当前使用 SQLite；MySQL/Redis repository adapter 尚未实现 |
 | 对象存储 | 可替换接口；S3 兼容 provider 使用 AWS SigV4 |
-| 发布基线 | GitHub `main` 的 `v0.0.4` 固定提交 `cfc2de2`；`v0.0.5` 开发中 |
+| 发布基线 | 当前本地 `main` 提交 `2a1dcac`；`0.0.6` 尚无本台账记录的正式 GitHub Release |
 | 本机部署证据 | `0.0.4` 的 API、前端镜像已无缓存重建；Docker 配置校验通过；完整运行态仍需单独记录 |
 | 云端部署证据 | 本次仅核对 GitHub 仓库与本机 Compose；云端主机和外部服务状态未检查 |
 | 远端引用 | `v0.0.3`、`v0.0.4` 标签和 GitHub Release 均已创建；云端部署仍需单独验收 |
@@ -32,7 +32,7 @@
 | M3 | 项目导航、发行管理、日志、系统设置与构建说明 | 本地实现完成；浏览器验收需单独记录 |
 | M4 | Docker Compose 构建及健康检查 | 本机 `0.0.3` 发布基线镜像无缓存重建；API、前端和 MySQL 健康检查通过，Redis 运行中但未配置健康检查；账号登录也已本地验证 |
 | M5 | 清理公开仓库全部可达历史和发行元数据 | `main` 已对齐；`v0.0.3` 标签和 GitHub Release 已创建，云端部署仍需单独验收 |
-| M6 | GitHub 项目授权、远端 Release staging、根目录配置和成员管理 | 已完成；102 项后端测试、80 项子测试、Django 检查、迁移漂移检查、编译、前端 typecheck/build、精确提交 CI/CD 与 `v0.0.4` Release 已核对 |
+| M6 | GitHub 授权、远端 Release staging、根目录配置和成员管理 | 远端 staging 与成员管理本地实现完成；当前候选改为系统设置全局 PAT，接口和文档正在复核；真实 PAT、对象存储、云端部署和客户端验收仍需单独记录 |
 | M7 | 前端安全性改进：统一会话过期处理和重定向安全防护 | 开发中；`0.0.5` 版本 |
 
 ## API 文档登记
@@ -46,7 +46,7 @@
 | 存储任务 | `/api/release-storage/status`、`/publish`、`/rollback`、`/audit` | 分别为 `read`、`publish`、`rollback` 权限；回滚需超级管理员确认 | staging 引用、不可变发行、latest 指针和审计 | 请求冲突、存储校验失败及恢复待核对均使用固定错误 | `fuwu_service/core.py`、`tests/test_publish_consistency.py` |
 | 操作日志 | `GET /api/logs` | `logs.read` 和项目范围 | 结构化操作记录 | 固定查询错误；不记录请求正文或令牌 | `fuwu_service/administration.py`、`tests/test_management_api.py` |
 | 系统设置 | `GET/PATCH /api/settings`、`PATCH /api/settings/storage` | 登录查询；更改需 `settings.manage`；凭据配置还需超级管理员和安全连接 | 通用偏好、非敏感存储目标及服务端凭据配置 | 凭据未进入响应、数据库或日志 | `fuwu_service/storage_settings.py`、`release_api/urls.py`、`tests/test_storage_settings.py` |
-| GitHub 项目授权 | `/api/projects/{id}/github-authorization` | `projects.manage` 和项目范围；写操作需安全连接 | 校验 GitHub 账号及项目仓库访问；只返回安全身份元数据 | PAT 不进入数据库、日志或 API 响应；撤销授权删除服务端记录 | `fuwu_service/github_auth.py`、`fuwu_service/api.py`、`tests/test_github_authorization_api.py` |
+| GitHub 全局授权 | `/api/settings/github-authorization` | `settings.manage`；写操作需安全连接 | 校验 GitHub 账号；只返回安全身份元数据；远端 staging 按项目登记仓库使用该授权 | PAT 不进入数据库、日志或 API 响应；撤销全局授权并清除受保护凭据记录 | `fuwu_service/github_auth.py`、`fuwu_service/api.py`、`tests/test_github_authorization_api.py` |
 | 远端发行 staging | `POST /api/release-storage/stage-remote` | `release.storage.publish`；项目下载使用项目授权 | GitHub Release 资产、SHA256SUMS 与 manifest 校验后生成受保护 staging | 只允许 GitHub HTTPS 域名；失败清理临时目录；不更新 latest | `fuwu_service/core.py`、`tests/test_remote_stage.py` |
 | 更新器读取 | 对象存储 HTTPS `GET .../latest.json` | 匿名只读 | 渠道 latest 指向不可变 v1 manifest | 客户端验证 SHA256 后暂存 | `fuwu_service/core.py`、兼容性测试 |
 
@@ -97,6 +97,7 @@
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-10-23 | `0.0.6` 候选：GitHub PAT 授权统一到系统设置全局接口；畸形或旧项目级凭据文件 fail closed；公开 API/部署文档同步更新；本地测试与 Django 检查结果单独记录 |
 | 2026-10-22 | 开发 `0.0.5`：前端安全性增强，统一会话过期处理，引入重定向路径验证防止开放重定向攻击 |
 | 2026-10-21 | 完成并发布 `0.0.4`：加入 GitHub 项目授权、远端 Release staging、根目录配置和超级管理员成员管理；CI/CD、Release 资产和归档校验通过 |
 | 2026-10-21 | 完成 `v0.0.3` 正式发布：标签固定 `566603e`，CD run `39484401604` 创建 GitHub Release；云端主机状态未检查 |

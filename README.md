@@ -69,7 +69,7 @@ Compose 可启动 MySQL 与 Redis 服务，但当前业务数据仍保存在 SQL
 
 系统设置允许超级管理员通过安全连接保存对象存储凭据。凭据保存在服务端 root 所有、权限为 `0600` 的独立文件中；Bucket、区域、Endpoint 和前缀等非敏感配置保存在数据库。API 仅返回配置状态和受限权限用户可见的 Access Key 脱敏提示，不返回 Secret Access Key 或 Session Token。环境变量或云平台 IAM role 也可提供服务端凭据。客户端发行下载始终使用匿名 HTTPS。
 
-项目设置还支持按项目授权 GitHub Personal Access Token。服务端只接受安全连接中的令牌，校验 GitHub 账号及项目仓库读取权限后，将令牌写入 `fuwu.config.json` 指定的 `0600` secrets 文件（可用 `FUWU_GITHUB_CREDENTIALS_FILE` 覆盖路径）；令牌不写入 SQLite、响应或日志。远端 Release staging 会使用对应项目授权读取私有 Release，并校验远端 `SHA256SUMS` 后再进入普通发布流程。
+系统设置支持全局 GitHub Personal Access Token。服务端只接受安全连接中的令牌，调用 GitHub `/user` 校验账号后，将令牌写入 `fuwu.config.json` 指定的 `0600` secrets 文件（可用 `FUWU_GITHUB_CREDENTIALS_FILE` 覆盖路径）；令牌不写入 SQLite、响应或日志。远端 Release staging 会按项目登记的仓库使用该全局授权读取私有 Release，并校验远端 `SHA256SUMS` 后再进入普通发布流程。
 
 ## 文档
 

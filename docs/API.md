@@ -50,7 +50,8 @@
 | `GET`、`POST` | `/api/projects` | 已登录查询；创建需 `projects.manage` 和全项目范围 | 200、201 |
 | `GET` | `/api/projects/{id}` | 项目范围 | 200 |
 | `PATCH` | `/api/projects/{id}` | `projects.manage` 和项目范围 | 200 |
-| `GET`、`POST`、`DELETE` | `/api/projects/{id}/github-authorization` | `projects.manage` 和项目范围；写入需安全连接 | 200 |
+| `GET`、`POST`、`DELETE` | `/api/settings/github-authorization` | `settings.manage`；写入需安全连接 | 200 |
+| `POST` | `/api/settings/github-authorization/check` | `settings.manage`；需安全连接 | 200 |
 | `GET` | `/api/releases` | `release.storage.read` 和项目范围 | 200 |
 | `GET` | `/api/release-storage/status` | `release.storage.read` 和项目范围 | 200 |
 | `POST` | `/api/release-storage/publish` | `release.storage.publish` 和项目范围 | 201；幂等重放为 200 |
@@ -89,7 +90,7 @@
 
 `PATCH /api/projects/{id}` 可更新非空的 `name`、`description`、`public_api`、`build_instructions` 和布尔 `active`。仓库绑定创建后不可修改，已有发行记录不会随项目说明变更而改写。
 
-项目 GitHub 授权通过 `GET`、`POST`、`DELETE /api/projects/{id}/github-authorization` 管理。`POST` 请求仅接受 `{ "token": "..." }`，必须使用 HTTPS（本机回环连接可用于初始化），服务端会先调用 GitHub `/user` 校验账号，再校验该账号能读取项目绑定的 `owner/repo`。响应只包含 `authorized`、`login`、`node_id`、`scopes` 和 `authorizedAt`；令牌只保存在服务端配置的 0600 secrets 文件，不进入 SQLite、操作日志或任何 API 响应。`DELETE` 会撤销该项目的授权。
+GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/github-authorization` 管理，是所有项目远端 Release staging 共用的全局配置。请求需要 `settings.manage`；`POST`、`DELETE` 和 `POST /api/settings/github-authorization/check` 还必须使用 HTTPS（本机回环连接可用于初始化）。`POST` 请求仅接受 `{ "token": "..." }`，服务端调用 GitHub `/user` 校验账号身份并检查绑定仓库的读取权限；远端 staging 时会将项目仓库与登记值绑定，并使用该全局令牌访问 GitHub Release。响应只包含 `authorized`、`login`、`node_id`、`scopes`、`authorizedAt` 和不含凭据的 `permissionCheck` 元数据；令牌只保存在服务端配置的 0600 secrets 文件，不进入 SQLite、操作日志或任何 API 响应。`POST /api/settings/github-authorization/check` 重新校验既有授权而不刷新保存时间，`DELETE` 会撤销全局授权。
 
 ## 版本与发行查询
 
@@ -105,7 +106,7 @@
 
 ### 远端 Release staging
 
-`POST /api/release-storage/stage-remote` 支持项目绑定的 GitHub 账号读取私有或公开 Release；未提供 `project` 时仅使用匿名公开访问。提供 `project` 时，服务端只使用该项目已授权的 GitHub 账号，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
+`POST /api/release-storage/stage-remote` 支持通过全局 GitHub 授权读取私有或公开 Release；未提供 `project` 时使用匿名公开访问。提供 `project` 时，服务端使用系统设置中的全局令牌，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
 
 ```json
 {
@@ -117,7 +118,7 @@
 }
 ```
 
-成功响应只返回 job 标识和状态；资产内容、凭据和远端响应不会写入日志。
+成功响应只返回 job 标识和状态；资产内容、凭据和远端响应不会写入日志。项目远端 staging 需要先在系统设置提交并验证全局 PAT；若未配置授权，服务端不会从请求体或项目记录读取凭据。
 
 `POST /api/release-storage/publish` 只接受受保护的 staging/job 引用；拒绝任意路径、对象存储 URL、凭据、文件上传和未知字段。
 
@@ -166,7 +167,7 @@
 
 `GET /api/settings` 返回通用偏好、只读运行信息和存储配置。`PATCH /api/settings` 只接受 `appName`、`timezone`、`defaultChannel` 和 `logRetentionDays`。日志保留天数范围为 7 至 3650；频道为 `stable` 或 `beta`。
 
-对象存储目标和凭据通过 `PATCH /api/settings/storage` 更新。请求必须通过 HTTPS 或 localhost 页面发送，并由具有 `settings.manage` 权限的超级管理员执行。请求字段为 `bucket`、`region`、`endpoint`、`prefix`、`accessKeyId`、`secretAccessKey` 和可选 `sessionToken`。凭据只保存到 root 所有、权限为 `0600` 的服务端文件；数据库只存储非敏感目标配置。Endpoint 必须是 AWS S3 地址或管理员预先配置的允许地址。已有发行或指针后不允许修改存储目标，但可以轮换凭据。
+对象存储目标和凭据通过 `PATCH /api/settings/storage` 更新。请求必须通过 HTTPS 或 localhost 页面发送，并由具有 `settings.manage` 权限的超级管理员执行。请求字段为 `bucket`、`region`、`endpoint`、`prefix`、`accessKeyId`、`secretAccessKey` 和可选 `sessionToken`。响应只返回 `credentialsConfigured`、`credentialSource`、末四位 `accessKeyHint` 以及 `secretAccessKeyConfigured`、`sessionTokenConfigured` 这些状态或脱敏字段，真实凭据永不回显。凭据只保存到 root 所有、权限为 `0600` 的服务端文件；数据库只存储非敏感目标配置。Endpoint 必须是 AWS S3 地址或管理员预先配置的允许地址。已有发行或指针后不允许修改存储目标，但可以轮换凭据。
 
 响应不包含 Secret Access Key 或 Session Token。具有 `settings.manage` 的用户可看到脱敏后的 Access Key ID 提示；其他登录用户不会收到该提示。更新凭据时 Access Key ID 与 Secret Access Key 必须同时提供；留空凭据仅能沿用现存的受保护凭据文件。
 
