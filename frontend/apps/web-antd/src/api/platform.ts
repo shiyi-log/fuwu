@@ -60,6 +60,7 @@ export interface SystemSettings {
   logRetentionDays: number;
   readOnly: Record<string, boolean | null | number | string>;
   storage: ObjectStorageSettings;
+  version: string;
 }
 
 export interface ObjectStorageSettings {
@@ -95,16 +96,16 @@ export function updateProjectApi(id: string, data: Partial<Pick<ProjectRecord, '
   return requestClient.request(`/projects/${encodeURIComponent(id)}`, { data, method: 'PATCH', responseReturn: 'body' });
 }
 
-export function getGithubAuthorizationApi(id: string) {
-  return requestClient.get<GithubAuthorization>(`/projects/${encodeURIComponent(id)}/github-authorization`, { responseReturn: 'body' });
+export function getGithubAuthorizationApi() {
+  return requestClient.get<GithubAuthorization>('/settings/github-authorization', { responseReturn: 'body' });
 }
 
-export function authorizeGithubApi(id: string, token: string) {
-  return requestClient.post<GithubAuthorization>(`/projects/${encodeURIComponent(id)}/github-authorization`, { token }, { responseReturn: 'body' });
+export function authorizeGithubApi(token: string) {
+  return requestClient.post<GithubAuthorization>('/settings/github-authorization', { token }, { responseReturn: 'body' });
 }
 
-export function revokeGithubAuthorizationApi(id: string) {
-  return requestClient.request<GithubAuthorization>(`/projects/${encodeURIComponent(id)}/github-authorization`, { method: 'DELETE', responseReturn: 'body' });
+export function revokeGithubAuthorizationApi() {
+  return requestClient.request<GithubAuthorization>('/settings/github-authorization', { method: 'DELETE', responseReturn: 'body' });
 }
 
 export async function listAccountsApi() {

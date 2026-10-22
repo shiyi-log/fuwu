@@ -1,4 +1,4 @@
-"""Project-scoped GitHub credentials and identity verification.
+"""Global GitHub credentials and identity verification.
 
 GitHub access tokens are deployment secrets.  They are kept outside SQLite,
 operation logs, and API responses in a root-only (or service-user-only)
@@ -210,15 +210,15 @@ class GitHubAuthorizationStore:
     def _read(self) -> dict[str, Any]:
         self._check_file()
         if not self.path.exists():
-            return {"version": 1, "projects": {}}
+            return {"version": 1, "account": None}
         try:
             with self.path.open("r", encoding="utf-8") as stream:
                 data = json.load(stream)
         except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
             raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503) from None
-        if not isinstance(data, Mapping) or data.get("version") != 1 or not isinstance(data.get("projects"), Mapping):
+        if not isinstance(data, Mapping) or data.get("version") != 1:
             raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
-        return {"version": 1, "projects": dict(data["projects"])}
+        return {"version": 1, "account": data.get("account")}
 
     def _write(self, data: Mapping[str, Any]) -> None:
         self._ensure_parent()
@@ -270,20 +270,18 @@ class GitHubAuthorizationStore:
             raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
         return {"token": token, "login": login, "node_id": node_id, "scopes": scopes, "authorizedAt": authorized_at}
 
-    def get_token(self, project_id: str) -> str | None:
+    def get_token(self) -> str | None:
         """Return a token only for an internal, already-authorized download."""
 
-        project_id = self._project(project_id)
         with self._lock:
-            record = self._read()["projects"].get(project_id)
+            record = self._read()["account"]
             if not isinstance(record, Mapping):
                 return None
             return self._record(record)["token"]
 
-    def get_public(self, project_id: str) -> dict[str, Any]:
-        project_id = self._project(project_id)
+    def get_public(self) -> dict[str, Any]:
         with self._lock:
-            record = self._read()["projects"].get(project_id)
+            record = self._read()["account"]
             if not isinstance(record, Mapping):
                 return {"authorized": False, "login": None, "node_id": None, "scopes": [], "authorizedAt": None}
             record = self._record(record)
@@ -295,8 +293,7 @@ class GitHubAuthorizationStore:
                 "authorizedAt": record["authorizedAt"],
             }
 
-    def authorize(self, project_id: str, token: str, identity: Mapping[str, Any]) -> dict[str, Any]:
-        project_id = self._project(project_id)
+    def authorize(self, token: str, identity: Mapping[str, Any]) -> dict[str, Any]:
         token = _validate_token(token)
         login = _validate_login(identity.get("login"))
         node_id = identity.get("node_id")
@@ -306,19 +303,13 @@ class GitHubAuthorizationStore:
         record = {"token": token, "login": login, "node_id": node_id, "scopes": scopes, "authorizedAt": _timestamp()}
         with self._lock:
             data = self._read()
-            projects = dict(data["projects"])
-            projects[project_id] = record
-            self._write({"version": 1, "projects": projects})
-        return self.get_public(project_id)
+            self._write({"version": 1, "account": record})
+        return self.get_public()
 
-    def revoke(self, project_id: str) -> dict[str, Any]:
-        project_id = self._project(project_id)
+    def revoke(self) -> dict[str, Any]:
         with self._lock:
-            data = self._read()
-            projects = dict(data["projects"])
-            projects.pop(project_id, None)
-            self._write({"version": 1, "projects": projects})
-        return self.get_public(project_id)
+            self._write({"version": 1, "account": None})
+        return self.get_public()
 
 
 def get_github_authorization_store(env: Mapping[str, str] | None = None) -> GitHubAuthorizationStore:

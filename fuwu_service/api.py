@@ -12,6 +12,7 @@ from .administration import administration_store
 from .core import PROJECT_RE, RBAC, ReleaseError, ReleaseService, validate_channel
 from .github_auth import get_github_authorization_store, verify_github_repository_access, verify_github_token
 from .storage_settings import storage_settings_payload, update_storage_settings
+from .version import __version__
 
 
 def _user(rbac: RBAC, authorization: str | None) -> dict[str, Any]:
@@ -38,9 +39,7 @@ def requires_generated_request_id(path: str) -> bool:
     errors cannot echo an attacker-controlled canary in the response.
     """
 
-    return path in {"/api/settings/storage", "/api/release-storage/stage-remote"} or (
-        path.startswith("/api/projects/") and path.endswith("/github-authorization")
-    )
+    return path in {"/api/settings/storage", "/api/settings/github-authorization", "/api/release-storage/stage-remote"}
 
 
 def _allowed_project(rbac: RBAC, authorization: str | None, value: Any) -> str:
@@ -154,38 +153,6 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                 project_id = response.get("id")
             else:
                 code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
-        elif match := re.fullmatch(r"/api/projects/([a-z0-9][a-z0-9._-]*)/github-authorization", path):
-            category, action, route = "project", "github_authorization", "/api/projects/{id}/github-authorization"
-            project_id = _allowed_project(rbac, authorization, match[1])
-            rbac.require(authorization, "projects.manage")
-            project = service.repository.get_project(project_id)
-            if project is None:
-                raise ReleaseError("project_not_found", "project was not found", 404)
-            store = _github_authorizations()
-            if method == "GET":
-                code, response = 200, store.get_public(project_id)
-            elif method == "POST":
-                if not request_secure:
-                    raise ReleaseError("secure_transport_required", "secure connection is required", 400)
-                if set(body) != {"token"}:
-                    raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
-                identity = verify_github_token(body.get("token"))
-                verify_github_repository_access(body.get("token"), project["repository"])
-                response = store.authorize(project_id, body.get("token"), identity)
-                service.repository.audit_event("github_authorized", project_id=project_id, version=None, channel=None,
-                    actor=actor, request_id=request_id, details={"status": "authorized", "login": response["login"], "scopes": response["scopes"]})
-                code = 200
-            elif method == "DELETE":
-                if not request_secure:
-                    raise ReleaseError("secure_transport_required", "secure connection is required", 400)
-                if body:
-                    raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
-                response = store.revoke(project_id)
-                service.repository.audit_event("github_revoked", project_id=project_id, version=None, channel=None,
-                    actor=actor, request_id=request_id, details={"status": "revoked"})
-                code = 200
-            else:
-                code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
         elif match := re.fullmatch(r"/api/projects/([a-z0-9][a-z0-9._-]*)", path):
             category, action, route = "project", "project", "/api/projects/{id}"
             project_id = _allowed_project(rbac, authorization, match[1])
@@ -237,7 +204,7 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                 if supplied_repository is not None and supplied_repository != project["repository"]:
                     raise ReleaseError("project_repository_mismatch", "repository does not match registered project", 409)
                 remote_request["repository"] = project["repository"]
-                github_token = _github_authorizations().get_token(project_id)
+                github_token = _github_authorizations().get_token()
             code, response = service.stage_remote_release(remote_request, actor=actor, request_id=request_id,
                 github_token=github_token, project_id=project_id)
         elif path in {"/api/release-storage/publish", "/api/release-storage/rollback"} and method == "POST":
@@ -274,6 +241,7 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                     service,
                     include_access_key_hint="settings.manage" in permissions,
                 )
+                response["version"] = __version__
             elif method == "PATCH":
                 rbac.require(authorization, "settings.manage")
                 code, response = 200, administration_store().update_settings(body, service)
@@ -291,6 +259,33 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                 store = administration_store()
                 response = update_storage_settings(store, service, body, request_secure=request_secure)
                 code = 200
+        elif path == "/api/settings/github-authorization":
+            category, action, route = "settings", "github_authorization", path
+            rbac.require(authorization, "settings.manage")
+            store = _github_authorizations()
+            if method == "GET":
+                code, response = 200, store.get_public()
+            elif method == "POST":
+                if not request_secure:
+                    raise ReleaseError("secure_transport_required", "secure connection is required", 400)
+                if set(body) != {"token"}:
+                    raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
+                identity = verify_github_token(body.get("token"))
+                response = store.authorize(body.get("token"), identity)
+                service.repository.audit_event("github_authorized", project_id=None, version=None, channel=None,
+                    actor=actor, request_id=request_id, details={"status": "authorized", "login": response["login"], "scopes": response["scopes"]})
+                code = 200
+            elif method == "DELETE":
+                if not request_secure:
+                    raise ReleaseError("secure_transport_required", "secure connection is required", 400)
+                if body:
+                    raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
+                response = store.revoke()
+                service.repository.audit_event("github_revoked", project_id=None, version=None, channel=None,
+                    actor=actor, request_id=request_id, details={"status": "revoked"})
+                code = 200
+            else:
+                code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
         else:
             code, response = 404, {"code": "not_found", "message": "resource was not found"}
     except ReleaseError as error:

@@ -1,18 +1,20 @@
 <script setup lang="ts">
+import type { GithubAuthorization } from '#/api/platform';
 import { computed, onBeforeUnmount, onMounted, reactive, ref } from 'vue';
 import { useAccess } from '@vben/access';
 import { Page } from '@vben/common-ui';
-import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, message, Select, Spin } from 'ant-design-vue';
-import { getSystemSettingsApi, updateObjectStorageSettingsApi, updateSystemSettingsApi } from '#/api';
+import { Alert, Button, Card, Descriptions, Form, Input, InputNumber, message, Select, Space, Spin, Tag } from 'ant-design-vue';
+import { authorizeGithubApi, getGithubAuthorizationApi, getSystemSettingsApi, revokeGithubAuthorizationApi, updateObjectStorageSettingsApi, updateSystemSettingsApi } from '#/api';
 
 const { hasAccessByCodes } = useAccess();
 const canManage = computed(() => hasAccessByCodes(['settings.manage']));
 const loading = ref(false); const saving = ref(false); const error = ref('');
 const storageSaving = ref(false);
-const model = reactive({ appName: 'fuwu', timezone: 'Asia/Shanghai', defaultChannel: 'stable' as 'beta' | 'stable', logRetentionDays: 90 });
+const model = reactive({ appName: 'fuwu', timezone: 'Asia/Shanghai', defaultChannel: 'stable' as 'beta' | 'stable', logRetentionDays: 90, version: 'unknown' });
 const metadata = ref<Record<string, boolean | null | number | string>>({});
 const storage = reactive({ bucket: '', region: '', endpoint: '', prefix: '', credentialsConfigured: false, credentialSource: '', accessKeyHint: null as string | null });
 const credentials = reactive({ accessKeyId: '', secretAccessKey: '', sessionToken: '' });
+const github = ref<GithubAuthorization>(); const githubToken = ref(''); const githubSaving = ref(false);
 const labels: Record<string, string> = { version: '服务版本', provider: '对象存储 Provider', publicReadMode: '公共读取方式', repository: '数据 Repository', singleInstance: '单实例模式' };
 const canSubmitCredentials = computed(() => {
   if (typeof window === 'undefined') return false;
@@ -30,9 +32,10 @@ async function load() {
   loading.value = true;
   try {
     const data = await getSystemSettingsApi();
-    Object.assign(model, { appName: data.appName, timezone: data.timezone, defaultChannel: data.defaultChannel, logRetentionDays: data.logRetentionDays });
+    Object.assign(model, { appName: data.appName, timezone: data.timezone, defaultChannel: data.defaultChannel, logRetentionDays: data.logRetentionDays, version: data.version });
     metadata.value = data.readOnly;
     Object.assign(storage, data.storage || {});
+    github.value = canManage.value ? await getGithubAuthorizationApi() : undefined;
     error.value = '';
   }
   catch { error.value = '系统设置加载失败。'; }
@@ -81,13 +84,40 @@ async function saveStorage() {
   }
 }
 
+async function saveGithub() {
+  if (!githubToken.value.trim()) { message.warning('请输入 GitHub 访问令牌'); return; }
+  githubSaving.value = true;
+  try { github.value = await authorizeGithubApi(githubToken.value.trim()); githubToken.value = ''; message.success('GitHub 账号已授权，令牌仅保存在服务端受保护文件中'); }
+  catch { /* Shared client displays safe server errors. */ }
+  finally { githubSaving.value = false; }
+}
+async function revokeGithub() {
+  githubSaving.value = true;
+  try { github.value = await revokeGithubAuthorizationApi(); message.success('GitHub 授权已撤销'); }
+  catch { /* Shared client displays safe server errors. */ }
+  finally { githubSaving.value = false; }
+}
+
 onMounted(load);
 onBeforeUnmount(clearCredentials);
 </script>
 <template>
   <Page title="系统设置" description="管理服务通用配置与只读运行信息">
     <Alert v-if="error" :message="error" type="error" show-icon class="mb-4" />
-    <Spin :spinning="loading"><div class="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card title="通用配置"><Form layout="vertical"><Form.Item label="服务名称" required><Input v-model:value="model.appName" :disabled="!canManage" :maxlength="120" /></Form.Item><Form.Item label="时区" required><Input v-model:value="model.timezone" :disabled="!canManage" placeholder="Asia/Shanghai" /></Form.Item><Form.Item label="默认发行频道"><Select v-model:value="model.defaultChannel" :disabled="!canManage" :options="[{ value: 'stable', label: 'stable' }, { value: 'beta', label: 'beta' }]" /></Form.Item><Form.Item label="运营日志保留天数"><InputNumber v-model:value="model.logRetentionDays" :disabled="!canManage" :min="7" :max="3650" :precision="0" /></Form.Item><Alert message="保留期只应用于运营日志，不会删除不可变的发行审计。" show-icon type="info" class="mb-4" /><Button v-if="canManage" type="primary" :loading="saving" @click="save">保存设置</Button></Form></Card><Card title="只读运行信息"><Descriptions :column="1" bordered><Descriptions.Item v-for="(value, key) in metadata" :key="key" :label="labels[key] || key">{{ typeof value === 'boolean' ? value ? '是' : '否' : value ?? '—' }}</Descriptions.Item></Descriptions></Card>
+    <Spin :spinning="loading"><div class="grid grid-cols-1 gap-4 xl:grid-cols-2"><Card title="通用配置"><Form layout="vertical"><Form.Item label="服务名称" required><Input v-model:value="model.appName" :disabled="!canManage" :maxlength="120" /></Form.Item><Form.Item label="时区" required><Input v-model:value="model.timezone" :disabled="!canManage" placeholder="Asia/Shanghai" /></Form.Item><Form.Item label="默认发行频道"><Select v-model:value="model.defaultChannel" :disabled="!canManage" :options="[{ value: 'stable', label: 'stable' }, { value: 'beta', label: 'beta' }]" /></Form.Item><Form.Item label="运营日志保留天数"><InputNumber v-model:value="model.logRetentionDays" :disabled="!canManage" :min="7" :max="3650" :precision="0" /></Form.Item><Alert message="保留期只应用于运营日志，不会删除不可变的发行审计。" show-icon type="info" class="mb-4" /><Button v-if="canManage" type="primary" :loading="saving" @click="save">保存设置</Button></Form></Card><Card title="只读运行信息"><Descriptions :column="1" bordered><Descriptions.Item label="服务版本">{{ model.version }}</Descriptions.Item><Descriptions.Item v-for="(value, key) in metadata" :key="key" :label="labels[key] || key">{{ typeof value === 'boolean' ? value ? '是' : '否' : value ?? '—' }}</Descriptions.Item></Descriptions></Card>
+      <Card v-if="canManage" title="GitHub 账号授权" class="xl:col-span-2">
+        <div class="mb-3 text-sm text-gray-500">授权全局 GitHub 账号后，远端发行下载可以读取 GitHub 仓库的私有 Release。令牌只会发送到服务端并保存在受保护文件中。</div>
+        <div class="mb-3"><Tag :color="github?.authorized ? 'green' : 'default'">{{ github?.authorized ? `已授权：${github.login}` : '未授权' }}</Tag><span v-if="github?.authorizedAt" class="ml-2 text-xs text-gray-400">{{ github.authorizedAt }}</span></div>
+        <Form layout="vertical">
+          <Form.Item label="GitHub Personal Access Token">
+            <Input.Password v-model:value="githubToken" :maxlength="512" autocomplete="new-password" placeholder="仅用于校验和远端下载，不会回显" />
+          </Form.Item>
+          <Space>
+            <Button type="primary" :loading="githubSaving" @click="saveGithub">授权账号</Button>
+            <Button v-if="github?.authorized" danger :loading="githubSaving" @click="revokeGithub">撤销授权</Button>
+          </Space>
+        </Form>
+      </Card>
       <Card title="对象存储配置" class="xl:col-span-2">
         <Alert v-if="!canSubmitCredentials" class="mb-4" message="当前页面不是安全连接。可以保存非敏感配置；提交存储凭据需使用 HTTPS 或 localhost。" show-icon type="warning" />
         <Form layout="vertical">

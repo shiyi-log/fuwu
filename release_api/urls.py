@@ -15,7 +15,6 @@ urlpatterns = [
     path("api/roles", views.api_view),
     path("api/projects", views.api_view),
     path("api/projects/<str:project_id>", views.api_view),
-    path("api/projects/<str:project_id>/github-authorization", views.api_view),
     path("api/releases", views.api_view),
     path("api/release-storage/status", views.api_view),
     path("api/release-storage/stage-remote", views.api_view),
@@ -25,4 +24,5 @@ urlpatterns = [
     path("api/logs", views.api_view),
     path("api/settings", views.api_view),
     path("api/settings/storage", views.api_view),
+    path("api/settings/github-authorization", views.api_view),
 ]

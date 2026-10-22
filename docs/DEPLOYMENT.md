@@ -89,7 +89,7 @@ docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts
 
 默认前端端口为 `3331`，API 端口为 `8000`，数据存于 Compose 命名卷。API 容器同时挂载受保护的 secrets 目录，只读。对外提供服务时，应使用 HTTPS 反向代理并将管理 API 限制在可信网络内。
 
-### 项目 GitHub 授权
+### GitHub 账号授权应该在系统设置里完成
 
 项目设置中的“GitHub 账号授权”接受 Personal Access Token。服务会通过 GitHub API 校验账号身份和项目绑定仓库的读取权限，令牌只写入 `fuwu.config.json` 指定的 secrets 文件（默认 `secrets/github_accounts.json`）；该文件及父目录必须分别为 `0600` 和 `0700`，并加入部署主机的秘密管理或持久化卷。也可以使用 `FUWU_GITHUB_CREDENTIALS_FILE` 指向容器外挂载的 secrets 文件。令牌不会进入 SQLite、审计日志、API 响应或前端构建产物。
 
