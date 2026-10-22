@@ -3,9 +3,12 @@ from __future__ import annotations
 
 import json
 import ipaddress
+import logging
 import os
 import re
 import ssl
+import sys
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlsplit
 
@@ -13,6 +16,24 @@ from .administration import administration_store
 from .api import handle_api, requires_generated_request_id
 from .core import MemoryObjectStore, RBAC, ReleaseError, ReleaseService, S3ObjectStore, SQLiteRepository
 from .storage_settings import build_managed_store
+
+
+# 配置日志格式
+def setup_logging():
+    """配置带时间戳的日志"""
+    log_format = "%(asctime)s [%(levelname)s] %(message)s"
+    date_format = "%Y-%m-%d %H:%M:%S"
+
+    # 配置根日志记录器
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        datefmt=date_format,
+        stream=sys.stdout,
+        force=True,
+    )
+
+    return logging.getLogger(__name__)
 
 
 def build_storage() -> tuple[object, str]:
@@ -40,8 +61,12 @@ class ApiHandler(BaseHTTPRequestHandler):
     service: ReleaseService
     rbac: RBAC
 
-    def log_message(self, *_args: object) -> None:
-        return
+    def log_message(self, format: str, *args: object) -> None:
+        """记录请求日志，带时间戳"""
+        logger = logging.getLogger(__name__)
+        # 只记录非健康检查的请求
+        if "/health" not in str(args):
+            logger.info(f"{self.client_address[0]} - {format % args}")
 
     def _send(self, status: int, body: dict[str, object]) -> None:
         payload = json.dumps(body, ensure_ascii=False).encode()
@@ -107,12 +132,25 @@ class ApiHandler(BaseHTTPRequestHandler):
 
 
 def serve(host: str | None = None, port: int | None = None) -> None:
+    logger = setup_logging()
     host = host or os.environ.get("FUWU_HOST", "0.0.0.0")
-    port = port or int(os.environ.get("FUWU_PORT", "8000"))
+    port = port or int(os.environ.get("FUWU_PORT", "8088"))
     handler = type("FuwuApiHandler", (ApiHandler,), {"service": build_service(), "rbac": RBAC.from_env()})
-    with ThreadingHTTPServer((host, port), handler) as httpd:
-        print(f"fuwu release service listening on {host}:{port}", flush=True)
-        httpd.serve_forever()
+
+    try:
+        with ThreadingHTTPServer((host, port), handler) as httpd:
+            logger.info(f"fuwu release service listening on {host}:{port}")
+            logger.info(f"API endpoints available at http://{host}:{port}/api/")
+            httpd.serve_forever()
+    except OSError as e:
+        if e.errno == 98:  # Address already in use
+            logger.error(f"Port {port} is already in use. Please:")
+            logger.error(f"  1. Check for other processes: lsof -ti:{port}")
+            logger.error(f"  2. Kill them: kill -9 $(lsof -ti:{port})")
+            logger.error(f"  3. Or set a different port: FUWU_PORT=8089 fuwu-server")
+            sys.exit(1)
+        else:
+            raise
 
 
 if __name__ == "__main__":
