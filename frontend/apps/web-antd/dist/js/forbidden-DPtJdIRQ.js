@@ -1,0 +1,1 @@
+import{Ht as e,In as t,_n as n,_r as r,ln as i}from"../jse/index-index-CKzqrzFL.js";import{t as a}from"./fallback-p0VePkmi.js";var o=n(e(e({},{name:`Fallback403Demo`}),{},{__name:`forbidden`,setup(e){return(e,n)=>(t(),i(r(a),{status:`403`}))}}));export{o as default};
