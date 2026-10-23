@@ -1559,12 +1559,30 @@ class ReleaseService:
                 if declared.get("size") is not None and declared["size"] != len(body):
                     raise ReleaseError("remote_size_mismatch", "remote asset size does not match manifest", 422)
                 checksums.append(f"{digest}  {name}")
+            # The downloaded checksum file is normalized to the exact asset
+            # set selected for this staging job.  Keep the staged manifest
+            # self-consistent with that normalized file; GitHub manifests may
+            # describe the upstream checksum file byte-for-byte, while this
+            # service deliberately writes its own canonical representation.
+            normalized_sums = ("\n".join(checksums) + "\n").encode("utf-8")
+            staged_manifest = dict(manifest)
+            staged_checksums = dict(manifest.get("checksums", {})) if isinstance(manifest.get("checksums"), Mapping) else {}
+            staged_checksums.update({
+                "name": "SHA256SUMS",
+                "sha256": safe_digest(normalized_sums),
+                "entries": {
+                    parts[1]: parts[0]
+                    for parts in (line.split(maxsplit=1) for line in checksums)
+                },
+            })
+            staged_manifest["checksums"] = staged_checksums
             manifest_path = job_dir / "manifest.json"
-            manifest_path.write_text(json.dumps(dict(manifest), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+            manifest_path.write_text(json.dumps(staged_manifest, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
             manifest_path.chmod(0o600)
             sums_path = job_dir / "SHA256SUMS"
-            sums_path.write_text("\n".join(checksums) + "\n", encoding="utf-8")
+            sums_path.write_bytes(normalized_sums)
             sums_path.chmod(0o600)
+            manifest = staged_manifest
         except ReleaseError:
             shutil.rmtree(job_dir, ignore_errors=True)
             raise

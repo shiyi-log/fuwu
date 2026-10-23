@@ -98,6 +98,30 @@ class RemoteStageTests(unittest.TestCase):
         events = self.service.repository.list_audit()
         self.assertNotIn("ghs-test-token", json.dumps(events))
 
+    def test_stage_normalizes_manifest_checksum_file_digest_before_publish(self) -> None:
+        upstream_sums = f"{self.digest} *package.tar.gz\n".encode()
+        manifest = {
+            **self.manifest,
+            "checksums": {
+                "name": "SHA256SUMS",
+                "sha256": hashlib.sha256(upstream_sums).hexdigest(),
+                "entries": {"package.tar.gz": self.digest},
+            },
+        }
+        opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": upstream_sums})
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            status, _staged = self.service.stage_remote_release(
+                self._request(manifest=manifest), actor="admin", request_id="stage-normalize"
+            )
+        self.assertEqual(status, 201)
+        status, published = self.service.publish(
+            {"project": "remote", "version": "0.0.1", "channel": "stable", "staging_ref": "remote-job"},
+            actor="admin",
+            request_id="publish-normalize",
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(published["status"], "published")
+
     def test_stage_prefers_authenticated_asset_api_url_when_id_is_present(self) -> None:
         release = {
             **self.release,
