@@ -49,7 +49,7 @@
 | GitHub 全局授权 | `/api/settings/github-authorization` | `settings.manage`；写操作需安全连接 | 校验 GitHub 账号；只返回安全身份元数据；远端 staging 按项目登记仓库使用该授权 | PAT 不进入数据库、日志或 API 响应；撤销全局授权并清除受保护凭据记录 | `fuwu_service/github_auth.py`、`fuwu_service/api.py`、`tests/test_github_authorization_api.py` |
 | 远端发行发现与 staging | `GET /api/release-storage/latest`、`POST /api/release-storage/stage-remote` | `release.storage.publish`；项目下载使用全局 GitHub 授权和项目登记仓库 | 自动选择最新 `draft=false`、`prerelease=false` Release，读取并校验 manifest、SHA256SUMS 与资产后生成受保护 staging；`latest:true` 由服务端完成发现 | 只允许 GitHub HTTPS 域名；失败清理临时目录；不更新 latest；响应不含下载 URL 或凭据 | `fuwu_service/core.py`、`fuwu_service/api.py`、`tests/test_remote_stage.py`、`tests/test_management_api.py` |
 | 更新器读取 | 对象存储 HTTPS `GET .../latest.json`；服务代理 `GET /api/downloads/{project}/{channel}/latest.json` | 匿名只读 | stable latest 指向不可变 v1 manifest；服务代理校验数据库、manifest 和指针摘要 | 客户端验证 SHA256 后暂存；latest 不缓存 | `fuwu_service/core.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py` |
-| Fuwu 对外下载 | `GET /api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 由数据库发行记录解析 manifest、`SHA256SUMS` 和资产，再用服务端凭据流式读取 | 未发布版本、未知资产和路径遍历固定返回 404；不暴露对象存储凭据 | `fuwu_service/core.py`、`fuwu_service/server.py`、`tests/test_public_download.py` |
+| Fuwu 对外下载 | `GET /api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 由数据库发行记录解析 manifest、`SHA256SUMS` 和资产，再用服务端凭据流式读取；兼容 `vX.Y.Z` 版本段并归一化为数字版本 | 未发布版本、未知资产和路径遍历固定返回 404；不暴露对象存储凭据 | `fuwu_service/core.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py`、`tests/test_public_download.py` |
 
 详细字段、请求样例、权限、错误码与行为见 [API 接口文档](docs/API.md)。尚未生成独立 OpenAPI schema。
 
@@ -60,6 +60,7 @@
 | 2026-10-23 | 增加匿名 stable `latest.json` 服务代理，严格绑定已发布数据库记录与不可变 manifest；补充 Django 与轻量 HTTP 路由 | 本地 `tests/test_public_latest.py`、`tests/test_public_download.py`、`tests/test_api.py` 共 8 passed；线上部署待从 GitHub 拉取新 revision 后复核 |
 | 2026-10-23 | 修复 GitHub Release 远端 staging 的长耗时请求：前端单独配置 15 分钟超时、代理模板 20 分钟超时；仅 408/504 或无 HTTP 状态的网络中断保留 staging 引用继续发布；项目或频道切换会丢弃旧上下文；轻量服务吞掉已断开的响应管道错误；待确认的 staging 禁止重复下载 | 后端 `115 passed, 88 subtests passed`；前端 Vitest `32 passed`、typecheck、生产构建、Django check、migration check、compileall、`git diff --check` 均通过；未将此本地候选直接当作线上部署证据 |
 | 2026-10-24 | 增加按项目登记仓库自动发现最新正式 GitHub Release，并支持 `latest:true` 服务端下载到受保护 staging；前端提供一键发现、下载和预填发布表单，仍需显式 publish | 后端全量 `120 passed`、88 项子测试；前端 latest focused Vitest、typecheck、生产构建和 `git diff --check` 通过；远端部署与 Bark 线上 staging 待本轮单独验收 |
+| 2026-10-24 | 兼容 Heyue 对象键映射到匿名 API 时的 `vX.Y.Z` 版本路径；只归一化单个前缀 `v`，仍由核心版本校验和已发布资产白名单决定 | 本地公开下载、Django、轻量 HTTP 路由 `9 passed`；远端 `4354f28` 重启后 `v1.0.4` manifest/SHA256SUMS HTTP 200；8000 未监听 |
 
 当前包版本来自 `pyproject.toml`；版本摘要、兼容性、迁移和验证状态见[版本记录](docs/VERSION_HISTORY.md)。标签或镜像存在不等于 CI、真实对象存储或外部客户端验收通过。
 
