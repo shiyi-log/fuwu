@@ -7,7 +7,7 @@ import mimetypes
 import os
 from functools import lru_cache
 
-from django.http import JsonResponse, StreamingHttpResponse
+from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from fuwu_service.api import handle_api, requires_generated_request_id
@@ -94,6 +94,25 @@ def download_view(request, project_id: str, version: str, filename: str):
     response["Content-Length"] = str(descriptor["size"])
     response["Content-Disposition"] = "attachment; filename*=UTF-8''" + descriptor["name"]
     response["Cache-Control"] = "public, max-age=31536000, immutable"
+    response["X-Fuwu-SHA256"] = descriptor["sha256"]
+    return response
+
+
+@csrf_exempt
+def latest_download_view(request, project_id: str, channel: str):
+    """Django 适配器：匿名读取当前 stable 渠道指针。"""
+    if request.method != "GET":
+        return JsonResponse({"code": "method_not_allowed", "message": "method not allowed"}, status=405)
+    try:
+        descriptor = get_service().public_latest_download(project_id, channel)
+    except ReleaseError as error:
+        return JsonResponse({"code": error.code, "message": error.message}, status=error.status)
+    except Exception:
+        return JsonResponse({"code": "internal_error", "message": "internal server error"}, status=500)
+    response = HttpResponse(descriptor["body"], content_type="application/json")
+    response["Content-Length"] = str(descriptor["size"])
+    response["Content-Disposition"] = "attachment; filename*=UTF-8''latest.json"
+    response["Cache-Control"] = "no-store, max-age=0"
     response["X-Fuwu-SHA256"] = descriptor["sha256"]
     return response
 

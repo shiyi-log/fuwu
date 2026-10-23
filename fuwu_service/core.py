@@ -925,6 +925,98 @@ class ReleaseService:
             raise ReleaseError("object_not_found", "download object was not found", 404)
         return {"name": name, "key": artifact["object_key"], "size": artifact["size"], "sha256": artifact["sha256"]}
 
+    def public_latest_download(self, project: str, channel: str) -> dict[str, Any]:
+        """按数据库发行绑定解析当前 stable 指针，并返回存储中的原始字节。
+
+        客户端只能提供项目和渠道；指针键及不可变 manifest 键均由数据库记录
+        推导，并在返回前校验两个存储对象。这样匿名接口不会变成任意对象代理。
+        """
+        project = _project_value(validate_project_id, project)
+        channel = validate_channel(channel)
+        if channel != "stable":
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        registered = self.repository.get_project(project)
+        if not registered or not registered["active"]:
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        latest = self.repository.get_latest(project, channel)
+        if not latest:
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        try:
+            version = validate_version(latest["version"])
+            _, manifest_key, latest_key = self._keys(project, version, channel)
+        except (ReleaseError, KeyError, TypeError):
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502) from None
+        if latest.get("pointer_key") != latest_key:
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+        release = self.repository.get_release_by_id(str(latest.get("release_pk", "")))
+        if (
+            not release
+            or release.get("project_id") != project
+            or release.get("channel") != channel
+            or release.get("version") != version
+            or release.get("status") != "published"
+            or release.get("digest") != latest.get("digest")
+            or release.get("manifest_key") != manifest_key
+        ):
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+
+        try:
+            manifest_head = self.store.head_object(manifest_key)
+            manifest_body = self.store.get_object(manifest_key)
+            if manifest_head.get("sha256") != safe_digest(manifest_body) or int(manifest_head.get("size", -1)) != len(manifest_body):
+                raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+            pointer_head = self.store.head_object(latest_key)
+            pointer_body = self.store.get_object(latest_key)
+            if pointer_head.get("sha256") != safe_digest(pointer_body) or int(pointer_head.get("size", -1)) != len(pointer_body):
+                raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+            pointer = json.loads(pointer_body)
+        except ReleaseError as error:
+            if error.code == "object_not_found":
+                raise ReleaseError("object_not_found", "download object was not found", 404) from None
+            raise
+        except (TypeError, ValueError, UnicodeDecodeError):
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502) from None
+
+        if not isinstance(pointer, Mapping):
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+        manifest_digest = safe_digest(manifest_body)
+        if manifest_body != json_bytes(release["manifest"]):
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+        manifest = release["manifest"]
+        if (
+            not isinstance(manifest, Mapping)
+            or manifest.get("project") != project
+            or manifest.get("repository") != registered["repository"]
+            or manifest.get("version") != version
+            or manifest.get("tag") != release["tag"]
+            or manifest.get("revision") != release["revision"]
+            or str(manifest.get("releaseId")) != str(release["release_id"])
+        ):
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+        expected_pointer = {
+            "schemaVersion": 1,
+            "project": project,
+            "channel": channel,
+            "version": release["version"],
+            "tag": release["tag"],
+            "revision": release["revision"],
+            "releaseId": manifest["releaseId"],
+            "manifestKey": manifest_key,
+            "manifestSha256": manifest_digest,
+            "publishedAt": release["published_at"],
+            "immutable": True,
+            "verificationSource": manifest.get("verificationSource"),
+        }
+        if json_bytes(pointer) != json_bytes(expected_pointer):
+            raise ReleaseError("storage_verification_failed", "latest pointer verification failed", 502)
+        return {
+            "name": "latest.json",
+            "key": latest_key,
+            "size": len(pointer_body),
+            "sha256": safe_digest(pointer_body),
+            "body": pointer_body,
+        }
+
     def open_public_download(self, descriptor: Mapping[str, Any]):
         """Open a published asset for streaming without exposing storage credentials."""
         body = descriptor.get("body")

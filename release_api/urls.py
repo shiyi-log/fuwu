@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, re_path
 
 from . import views
 
@@ -16,6 +16,7 @@ urlpatterns = [
     path("api/projects", views.api_view),
     path("api/projects/<str:project_id>", views.api_view),
     path("api/releases", views.api_view),
+    re_path(r"^api/downloads/(?P<project_id>[^/]+)/(?P<channel>stable|beta)/latest\.json$", views.latest_download_view),
     path("api/downloads/<str:project_id>/<str:version>/<str:filename>", views.download_view),
     path("api/release-storage/status", views.api_view),
     path("api/release-storage/stage-remote", views.api_view),

@@ -48,12 +48,16 @@
 | 系统设置 | `GET/PATCH /api/settings`、`PATCH /api/settings/storage` | 登录查询；更改需 `settings.manage`；凭据配置还需超级管理员和安全连接 | 通用偏好、非敏感存储目标及服务端凭据配置 | 凭据未进入响应、数据库或日志 | `fuwu_service/storage_settings.py`、`release_api/urls.py`、`tests/test_storage_settings.py` |
 | GitHub 全局授权 | `/api/settings/github-authorization` | `settings.manage`；写操作需安全连接 | 校验 GitHub 账号；只返回安全身份元数据；远端 staging 按项目登记仓库使用该授权 | PAT 不进入数据库、日志或 API 响应；撤销全局授权并清除受保护凭据记录 | `fuwu_service/github_auth.py`、`fuwu_service/api.py`、`tests/test_github_authorization_api.py` |
 | 远端发行 staging | `POST /api/release-storage/stage-remote` | `release.storage.publish`；项目下载使用项目授权 | GitHub Release 资产、SHA256SUMS 与 manifest 校验后生成受保护 staging | 只允许 GitHub HTTPS 域名；失败清理临时目录；不更新 latest | `fuwu_service/core.py`、`tests/test_remote_stage.py` |
-| 更新器读取 | 对象存储 HTTPS `GET .../latest.json` | 匿名只读 | 渠道 latest 指向不可变 v1 manifest | 客户端验证 SHA256 后暂存 | `fuwu_service/core.py`、兼容性测试 |
+| 更新器读取 | 对象存储 HTTPS `GET .../latest.json`；服务代理 `GET /api/downloads/{project}/{channel}/latest.json` | 匿名只读 | stable latest 指向不可变 v1 manifest；服务代理校验数据库、manifest 和指针摘要 | 客户端验证 SHA256 后暂存；latest 不缓存 | `fuwu_service/core.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py` |
 | Fuwu 对外下载 | `GET /api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 由数据库发行记录解析 manifest、`SHA256SUMS` 和资产，再用服务端凭据流式读取 | 未发布版本、未知资产和路径遍历固定返回 404；不暴露对象存储凭据 | `fuwu_service/core.py`、`fuwu_service/server.py`、`tests/test_public_download.py` |
 
 详细字段、请求样例、权限、错误码与行为见 [API 接口文档](docs/API.md)。尚未生成独立 OpenAPI schema。
 
 ## 版本与发布记录
+
+| 日期 | 变更 | 验证状态 |
+| --- | --- | --- |
+| 2026-10-23 | 增加匿名 stable `latest.json` 服务代理，严格绑定已发布数据库记录与不可变 manifest；补充 Django 与轻量 HTTP 路由 | 本地 `tests/test_public_latest.py`、`tests/test_public_download.py`、`tests/test_api.py` 共 8 passed；线上部署待从 GitHub 拉取新 revision 后复核 |
 
 当前包版本来自 `pyproject.toml`；版本摘要、兼容性、迁移和验证状态见[版本记录](docs/VERSION_HISTORY.md)。标签或镜像存在不等于 CI、真实对象存储或外部客户端验收通过。
 

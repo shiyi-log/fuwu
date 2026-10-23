@@ -96,14 +96,19 @@ class ApiHandler(BaseHTTPRequestHandler):
         # release assets and are resolved against a published DB record.
         if len(parts) != 6 or parts[:3] != ["", "api", "downloads"] or any(not part for part in parts[3:]):
             raise ReleaseError("object_not_found", "download object was not found", 404)
-        descriptor = self.service.public_download(parts[3], parts[4], parts[5])
+        is_latest = parts[4] in {"stable", "beta"} and parts[5] == "latest.json"
+        if is_latest:
+            descriptor = self.service.public_latest_download(parts[3], parts[4])
+        else:
+            descriptor = self.service.public_download(parts[3], parts[4], parts[5])
         response = self.service.open_public_download(descriptor)
         try:
             self.send_response(200)
-            self.send_header("Content-Type", mimetypes.guess_type(descriptor["name"])[0] or "application/octet-stream")
+            content_type = "application/json" if is_latest else (mimetypes.guess_type(descriptor["name"])[0] or "application/octet-stream")
+            self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(descriptor["size"]))
             self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + descriptor["name"])
-            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("Cache-Control", "no-store, max-age=0" if is_latest else "public, max-age=31536000, immutable")
             self.send_header("X-Fuwu-SHA256", descriptor["sha256"])
             self.end_headers()
             while True:

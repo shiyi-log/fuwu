@@ -53,6 +53,7 @@
 | `GET`、`POST`、`DELETE` | `/api/settings/github-authorization` | `settings.manage`；写入需安全连接 | 200 |
 | `POST` | `/api/settings/github-authorization/check` | `settings.manage`；需安全连接 | 200 |
 | `GET` | `/api/releases` | `release.storage.read` 和项目范围 | 200 |
+| `GET` | `/api/downloads/{project}/{channel}/latest.json` | 公开；仅已发布 stable 指针 | 200；未发布或校验失败为 404/502 |
 | `GET` | `/api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 200；对象不存在为 404 |
 | `GET` | `/api/release-storage/status` | `release.storage.read` 和项目范围 | 200 |
 | `POST` | `/api/release-storage/publish` | `release.storage.publish` 和项目范围 | 201；幂等重放为 200 |
@@ -104,6 +105,8 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 `GET /api/release-storage/audit` 支持 `project` 与 `channel` 查询参数，最多返回最近 100 条发行和指针事件。记录包含事件类型、项目、版本、渠道、操作者、request ID、时间和经筛选的详情。
 
 `GET /api/downloads/{project}/{version}/{filename}` 是面向安装器和升级器的匿名 HTTPS 下载入口。服务端只解析数据库中已经发布的 `stable` 发行及其 `manifest.json`、`SHA256SUMS` 和资产名称，再使用服务端受保护的对象存储凭据流式读取；请求不能指定任意对象键，也不会返回存储凭据。响应包含 `Content-Length`、`Content-Disposition`、长期不可变缓存和 `X-Fuwu-SHA256`，客户端仍应按 `SHA256SUMS` 或 manifest 再次校验。该入口用于对象存储未开放匿名策略的部署，下载者不需要 GitHub 或 AWS 授权。
+
+`GET /api/downloads/{project}/{channel}/latest.json` 返回当前已发布 stable 渠道的指针 JSON。服务端同时核对数据库发行记录、不可变 `manifest.json` 和指针对象的摘要及字段绑定；`latest.json` 使用 `no-store`，客户端应在每次检查更新时重新获取，再按其中的 `manifestKey` 和摘要校验版本化 manifest。该接口与版本化资产接口共用服务端对象存储代理，因此匿名客户端不需要 GitHub 或 AWS 授权；beta 指针不会通过匿名下载接口暴露。
 
 ## 发布
 
