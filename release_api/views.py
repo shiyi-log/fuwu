@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import json
 import ipaddress
+import mimetypes
 import os
 from functools import lru_cache
 
-from django.http import JsonResponse
+from django.http import JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from fuwu_service.api import handle_api, requires_generated_request_id
@@ -60,6 +61,40 @@ def api_view(request, **_kwargs):
         status, payload = 500, {"code": "internal_error", "message": "internal server error", "request_id": request_id}
     response = JsonResponse(payload, status=status)
     response["Cache-Control"] = "no-store"
+    return response
+
+
+@csrf_exempt
+def download_view(request, project_id: str, version: str, filename: str):
+    """Django adapter for the anonymous published-asset download route."""
+    if request.method != "GET":
+        return JsonResponse({"code": "method_not_allowed", "message": "method not allowed"}, status=405)
+    try:
+        service = get_service()
+        descriptor = service.public_download(project_id, version, filename)
+        upstream = service.open_public_download(descriptor)
+    except ReleaseError as error:
+        return JsonResponse({"code": error.code, "message": error.message}, status=error.status)
+    except Exception:
+        return JsonResponse({"code": "internal_error", "message": "internal server error"}, status=500)
+
+    def chunks():
+        try:
+            while True:
+                chunk = upstream.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            close = getattr(upstream, "close", None)
+            if callable(close):
+                close()
+
+    response = StreamingHttpResponse(chunks(), content_type=mimetypes.guess_type(filename)[0] or "application/octet-stream")
+    response["Content-Length"] = str(descriptor["size"])
+    response["Content-Disposition"] = "attachment; filename*=UTF-8''" + descriptor["name"]
+    response["Cache-Control"] = "public, max-age=31536000, immutable"
+    response["X-Fuwu-SHA256"] = descriptor["sha256"]
     return response
 
 
