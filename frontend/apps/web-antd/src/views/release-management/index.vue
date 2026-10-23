@@ -37,6 +37,8 @@ import {
   stageRemoteReleaseApi,
 } from '#/api';
 
+import { isStageOutcomeUncertain } from './stage-errors';
+
 const { hasAccessByCodes } = useAccess();
 const route = useRoute();
 const versionPattern = /^[0-9]\.[0-9]\.[0-9]$/;
@@ -52,6 +54,8 @@ const selectedProject = computed(() => String(route.meta.projectId || ''));
 const selectedChannel = ref<ReleaseChannel>('stable');
 const publishOpen = ref(false);
 const remoteOpen = ref(false);
+const stageRemotePending = ref(false);
+const stageContextRevision = ref(0);
 const rollbackOpen = ref(false);
 const selectedRelease = ref<ReleaseRecord>();
 
@@ -202,19 +206,58 @@ function showPublishModal() {
   publishOpen.value = true;
 }
 function showRemoteModal() {
+  if (stageRemotePending.value) {
+    publishOpen.value = true;
+    message.warning('当前 staging 结果仍待确认，请先继续提交已有 staging 引用，不要重复下载。');
+    return;
+  }
   remoteModel.tag = '';
   remoteModel.staging_ref = '';
   remoteModel.assets = '';
   remoteModel.manifest = '';
   remoteOpen.value = true;
 }
+function resetStagingState() {
+  remoteOpen.value = false;
+  stageRemotePending.value = false;
+  Object.assign(remoteModel, { tag: '', staging_ref: '', assets: '', manifest: '' });
+  Object.assign(publishModel, { project: '', channel: 'stable', version: '', tag: '', revision: '', staging_ref: '' });
+}
+function preparePublishFromManifest(
+  manifest: Record<string, unknown>,
+  tag: string,
+  stagingRef: string,
+  project: string,
+  channel: ReleaseChannel,
+) {
+  const version = typeof manifest.version === 'string' ? manifest.version : tag.slice(1);
+  const revision = typeof manifest.revision === 'string' ? manifest.revision : '';
+  Object.assign(publishModel, {
+    project,
+    channel,
+    version,
+    tag,
+    revision,
+    staging_ref: stagingRef,
+  });
+}
 async function submitRemote() {
+  if (stageRemotePending.value) {
+    publishOpen.value = true;
+    message.warning('当前 staging 结果仍待确认，请先继续提交已有 staging 引用，不要重复下载。');
+    return;
+  }
+  const operationProject = selectedProject.value;
+  const operationChannel = selectedChannel.value;
+  const operationRevision = stageContextRevision.value;
+  const operationTag = remoteModel.tag;
+  const operationStagingRef = remoteModel.staging_ref;
   const assets = remoteModel.assets.split(',').map((item) => item.trim()).filter(Boolean);
-  if (!remoteModel.tag || !remoteModel.staging_ref || !assets.length || !remoteModel.manifest.trim()) {
+  if (!operationTag || !operationStagingRef || !assets.length || !remoteModel.manifest.trim()) {
     message.warning('请填写 Release tag、staging 引用、资产名称和 manifest JSON。');
     return;
   }
-  if (!/^v[0-9]\.[0-9]\.[0-9]$/.test(remoteModel.tag) || !stagingRefPattern.test(remoteModel.staging_ref)) {
+  if (!/^v[0-9]\.[0-9]\.[0-9]$/.test(operationTag) || !stagingRefPattern.test(operationStagingRef)) {
     message.warning('Tag 或 staging 引用格式不正确。');
     return;
   }
@@ -229,14 +272,32 @@ async function submitRemote() {
   }
   submitting.value = true;
   try {
-    await stageRemoteReleaseApi({ project: selectedProject.value, tag: remoteModel.tag, staging_ref: remoteModel.staging_ref, assets, manifest });
+    await stageRemoteReleaseApi({ project: operationProject, tag: operationTag, staging_ref: operationStagingRef, assets, manifest });
+    if (operationRevision !== stageContextRevision.value || selectedProject.value !== operationProject || selectedChannel.value !== operationChannel) {
+      message.warning('项目或频道已切换，已丢弃本次 staging 结果，请在当前项目重新发起操作。');
+      return;
+    }
     message.success('远端 Release 已下载到受保护 staging；请继续提交发布任务。');
     remoteOpen.value = false;
-    const version = typeof manifest.version === 'string' ? manifest.version : remoteModel.tag.slice(1);
-    const revision = typeof manifest.revision === 'string' ? manifest.revision : '';
-    Object.assign(publishModel, { project: selectedProject.value, channel: selectedChannel.value, version, tag: remoteModel.tag, revision, staging_ref: remoteModel.staging_ref });
+    stageRemotePending.value = false;
+    preparePublishFromManifest(manifest, operationTag, operationStagingRef, operationProject, operationChannel);
     publishOpen.value = true;
-  } catch {
+  } catch (error) {
+    if (operationRevision !== stageContextRevision.value || selectedProject.value !== operationProject || selectedChannel.value !== operationChannel) {
+      return;
+    }
+    if (isStageOutcomeUncertain(error)) {
+      // The server may still be finishing the synchronous download after the
+      // browser gives up. Preserve the exact staging_ref and manifest-derived
+      // publish fields so the operator can continue with POST /publish and
+      // does not create a second staging job that will conflict.
+      stageRemotePending.value = true;
+      remoteOpen.value = false;
+      preparePublishFromManifest(manifest, operationTag, operationStagingRef, operationProject, operationChannel);
+      publishOpen.value = true;
+      message.warning('远端 staging 结果暂时无法确认；已保留 staging 引用，请稍后直接提交发布，不要重复下载。');
+      return;
+    }
     message.error('远端 Release 下载失败，请确认 GitHub 授权、资产和校验清单。');
   } finally {
     submitting.value = false;
@@ -283,6 +344,7 @@ async function submitPublish() {
       staging_ref: publishModel.staging_ref,
     });
     message.success('发布任务已提交，服务端校验通过后才会更新 latest 指针。');
+    stageRemotePending.value = false;
     publishOpen.value = false;
     await loadData();
   } catch {
@@ -316,8 +378,10 @@ async function submitRollback() {
 }
 
 watch([selectedProject, selectedChannel], () => {
+  stageContextRevision.value += 1;
   publishOpen.value = false;
   rollbackOpen.value = false;
+  resetStagingState();
   releases.value = [];
   audits.value = [];
   storage.value = {};
@@ -397,6 +461,7 @@ watch([selectedProject, selectedChannel], () => {
 
     <Modal v-model:open="publishOpen" :confirm-loading="submitting" ok-text="提交发布任务" title="提交发行发布" @ok="submitPublish">
       <Alert class="mb-4" message="只允许提交受保护 staging 引用；控制台不会接收任意本地路径或云凭据。" show-icon type="info" />
+      <Alert v-if="stageRemotePending" class="mb-4" message="远端 staging 结果暂时无法确认" description="服务端可能仍在下载和校验资产。请稍后直接提交当前 staging 引用；不要再次发起远端下载，否则会产生 staging 冲突。" show-icon type="warning" />
       <Form layout="vertical">
         <Form.Item label="当前项目" required><Input :value="publishModel.project" disabled /></Form.Item>
         <Form.Item label="频道"><Select v-model:value="publishModel.channel"><Select.Option value="stable">stable</Select.Option><Select.Option value="beta">beta</Select.Option></Select></Form.Item>

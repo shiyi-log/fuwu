@@ -30,7 +30,7 @@ class ReleaseStorageContractTests(unittest.TestCase):
         self.assertFalse(manifest["draft"])
         self.assertFalse(manifest["prerelease"])
         self.assertEqual(manifest["channel"], "stable")
-        self.assertEqual(manifest["verificationSource"], "release-storage")
+        self.assertEqual(manifest["verificationSource"], "heyue-release-storage")
 
     def test_assets_use_the_immutable_version_prefix(self) -> None:
         manifest = self.manifest

@@ -20,6 +20,7 @@ from fuwu_service.core import (
     load_aws_credentials,
     next_version,
     safe_relative_path,
+    validate_manifest,
     validate_version,
 )
 from fuwu_service.worker import ReleaseWorker
@@ -71,6 +72,9 @@ class ReleaseServiceTests(unittest.TestCase):
         latest = json.loads(self.store.objects["releases/fuwu/stable/latest.json"][0])
         self.assertEqual(set(latest), {"schemaVersion", "project", "channel", "version", "tag", "revision", "releaseId", "manifestKey", "manifestSha256", "publishedAt", "immutable", "verificationSource"})
         self.assertTrue(latest["immutable"])
+        self.assertEqual(latest["verificationSource"], "heyue-release-storage")
+        manifest = json.loads(self.store.objects["releases/fuwu/v0.0.1/manifest.json"][0])
+        self.assertEqual(manifest["verificationSource"], "heyue-release-storage")
         releases = self.service.releases("fuwu", "stable")
         self.assertTrue(releases[0]["latest"])
         self.assertEqual(releases[0]["objectHeadStatus"], "verified")
@@ -78,6 +82,22 @@ class ReleaseServiceTests(unittest.TestCase):
         self.assertEqual(status2, 200)
         self.assertEqual(response2["status"], "published")
         self.assertEqual(self.service.status()["jobs"]["validation"]["status"], "validated")
+
+    def test_public_verification_source_is_canonicalized(self) -> None:
+        manifest = {
+            "schemaVersion": 1,
+            "repository": "example-org/sample-app",
+            "version": "0.0.1",
+            "tag": "v0.0.1",
+            "revision": "a" * 40,
+            "releaseId": "rel-0.0.1",
+            "draft": False,
+            "prerelease": False,
+            "verificationSource": "github-release-api",
+            "assets": {"python": {"path": "sample.whl", "sha256": "a" * 64, "size": 1}},
+        }
+        normalized, _ = validate_manifest(manifest)
+        self.assertEqual(normalized["verificationSource"], "heyue-release-storage")
 
     def test_same_version_different_digest_is_rejected(self) -> None:
         request = {"project": "fuwu", "version": "0.0.1", "channel": "stable", "staging_ref": self.make_job()}

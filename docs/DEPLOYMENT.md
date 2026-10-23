@@ -37,17 +37,17 @@ uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FU
 启动轻量 API 服务：
 
 ```bash
-FUWU_HOST=127.0.0.1 FUWU_PORT=8000 uv run --frozen fuwu-server
+FUWU_HOST=127.0.0.1 FUWU_PORT=8088 uv run --frozen fuwu-server
 ```
 
 也可通过 Django 开发服务器检查适配器：
 
 ```bash
 uv run --frozen python manage.py check
-uv run --frozen python manage.py runserver 127.0.0.1:8000 --noreload
+uv run --frozen python manage.py runserver 127.0.0.1:8088 --noreload
 ```
 
-同一时间同一端口只启动一个服务入口。健康检查地址为 `http://127.0.0.1:8000/healthz`。
+同一时间同一端口只启动一个服务入口。直接运行时健康检查地址为 `http://127.0.0.1:8088/healthz`；Compose 容器内部健康检查仍使用 `8000`，宿主端口由 `.env` 中的 `FUWU_PORT` 控制，示例为 `8088`。
 
 ## 前端开发
 
@@ -66,6 +66,8 @@ pnpm dev:antd
 pnpm --filter @vben/web-antd typecheck
 pnpm --filter @vben/web-antd build
 ```
+
+从 GitHub Release 远端 staging 大型 Docker 归档时，管理页面将 `/api/release-storage/stage-remote` 的浏览器超时默认设为 15 分钟，可在前端构建环境设置 `VITE_FUWU_STAGE_REMOTE_TIMEOUT_MS` 调整，允许范围为 60 秒至 60 分钟。随附 Nginx 配置将 API 代理读取和发送超时设为 20 分钟，部署环境应为更长的浏览器超时保留额外代理时间。服务端下载完成后仍需单独提交 `/api/release-storage/publish`。只有浏览器请求超时（408/504）或无 HTTP 状态的网络连接中断等无法判断请求是否已经完成的情况，页面才会保留原 staging 引用和 manifest 派生的发布字段，提示直接继续发布；不能再次发起同一个 staging 引用，否则会得到 `staging_conflict`。其他 4xx、502、503 以及 GitHub 资产、校验、授权或配置错误都属于明确失败，服务端会清理未完成的 staging，必须修正后重新 staging。切换项目或频道会丢弃当前页面中的待发布引用，避免跨项目提交。
 
 ## Docker Compose
 
@@ -87,7 +89,7 @@ docker compose ps
 docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts bootstrap --database /data/fuwu.sqlite3
 ```
 
-默认前端端口为 `3331`，API 端口为 `8000`，数据存于 Compose 命名卷。API 容器同时挂载受保护的 secrets 目录，只读。对外提供服务时，应使用 HTTPS 反向代理并将管理 API 限制在可信网络内。
+默认前端端口为 `3331`，API 宿主端口为 `8088`，容器内部端口为 `8000`，数据存于 Compose 命名卷。API 容器同时挂载受保护的 secrets 目录，只读。对外提供服务时，应使用 HTTPS 反向代理并将管理 API 限制在可信网络内。
 
 ### GitHub 账号授权应该在系统设置里完成
 

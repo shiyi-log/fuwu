@@ -58,6 +58,7 @@
 | 日期 | 变更 | 验证状态 |
 | --- | --- | --- |
 | 2026-10-23 | 增加匿名 stable `latest.json` 服务代理，严格绑定已发布数据库记录与不可变 manifest；补充 Django 与轻量 HTTP 路由 | 本地 `tests/test_public_latest.py`、`tests/test_public_download.py`、`tests/test_api.py` 共 8 passed；线上部署待从 GitHub 拉取新 revision 后复核 |
+| 2026-10-23 | 修复 GitHub Release 远端 staging 的长耗时请求：前端单独配置 15 分钟超时、代理模板 20 分钟超时；仅 408/504 或无 HTTP 状态的网络中断保留 staging 引用继续发布；项目或频道切换会丢弃旧上下文；轻量服务吞掉已断开的响应管道错误；待确认的 staging 禁止重复下载 | 后端 `115 passed, 88 subtests passed`；前端 Vitest `32 passed`、typecheck、生产构建、Django check、migration check、compileall、`git diff --check` 均通过；未将此本地候选直接当作线上部署证据 |
 
 当前包版本来自 `pyproject.toml`；版本摘要、兼容性、迁移和验证状态见[版本记录](docs/VERSION_HISTORY.md)。标签或镜像存在不等于 CI、真实对象存储或外部客户端验收通过。
 

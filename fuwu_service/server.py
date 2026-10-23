@@ -76,7 +76,14 @@ class ApiHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(payload)))
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
-        self.wfile.write(payload)
+        try:
+            self.wfile.write(payload)
+        except (BrokenPipeError, ConnectionResetError):
+            # A synchronous remote staging request can finish after the
+            # browser or proxy has timed out. The staging result and audit
+            # record are already durable; a closed response socket is not a
+            # server failure and should not produce a traceback.
+            logging.getLogger(__name__).info("client disconnected before API response was written")
 
     def _body(self) -> dict[str, object]:
         try:

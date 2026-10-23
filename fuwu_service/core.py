@@ -204,7 +204,11 @@ def validate_manifest(manifest: Mapping[str, Any], requested: Mapping[str, Any] 
     result["revision"] = revision
     result.setdefault("publishedAt", now_iso())
     result.setdefault("verifiedAt", now_iso())
-    result.setdefault("verificationSource", "release-storage")
+    # The public object-storage v1 contract is consumed by Heyue's anonymous
+    # updater, which requires this exact source marker in both manifest and
+    # latest pointer documents. Normalize upstream or legacy values here so
+    # every publication path emits the same public contract.
+    result["verificationSource"] = "heyue-release-storage"
     result.setdefault("checksums", {})
     return result, entries
 

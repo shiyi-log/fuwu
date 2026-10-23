@@ -42,6 +42,7 @@
 - 远端 Release staging 对带 `project` 的请求使用全局 PAT，并强制 GitHub 仓库与项目登记值一致；不带 `project` 的公开 Release 请求仍使用匿名访问。
 - 全局凭据文件只接受 `{"version":1,"account":...}` 结构；旧项目级或未知顶层结构会 fail closed，不会被误当作空授权。
 - 本版候选不包含真实生产 PAT、对象存储写入、云端部署或 Heyue 客户端验收；这些证据需要单独记录。
+- 修复远端 Release staging 的长耗时交互：前端默认等待 15 分钟并支持 `VITE_FUWU_STAGE_REMOTE_TIMEOUT_MS`，代理模板等待 20 分钟；仅浏览器 408/504 或无 HTTP 状态的网络中断可沿用原 staging 引用提交 publish，其他业务失败必须重新 staging，项目/频道切换会清理旧上下文，避免重复下载和跨项目提交。
 
 ## 0.0.6 远端验收补充
 

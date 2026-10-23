@@ -18,6 +18,7 @@ import { message } from 'ant-design-vue';
 import { useAuthStore } from '#/store';
 
 import { refreshTokenApi } from './core';
+import { rejectWithSanitizedRequestError } from './request-errors';
 
 const { apiURL } = useAppConfig(import.meta.env, import.meta.env.PROD);
 
@@ -85,22 +86,22 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
   // 通用的错误处理,如果没有进入上面的错误处理逻辑，就会进入这里
   client.addResponseInterceptor(
     errorMessageResponseInterceptor((msg: string, error) => {
-      // 这里可以根据业务进行定制,你可以拿到 error 内的信息进行定制化处理，根据不同的 code 做不同的提示，而不是直接使用 message.error 提示 msg
-      // 当前mock接口返回的错误字段是 error 或者 message
-      const responseData = error?.response?.data ?? {};
-      if (error?.config?.url?.replace(/\/$/, '').endsWith('/auth/login')) {
+      // The interceptor receives the original Axios error.  Only use its
+      // bounded HTTP status here; response bodies and request config may carry
+      // credentials or other user data.
+      const status = error?.response?.status;
+      if (status === 401) {
+        // Authentication handling already redirects or refreshes the session.
         return;
       }
-      const errorMessage = responseData?.error ?? responseData?.message ?? '';
-      // 如果没有错误信息，则会根据状态码进行提示
-      message.error(errorMessage || msg);
+      message.error(msg);
     }),
   );
 
   // UI handlers and router guards must never receive Axios request config,
   // which can contain an Authorization header or a password form payload.
   client.addResponseInterceptor({
-    rejected: () => Promise.reject(new Error('请求未完成，请查看提示或稍后重试')),
+    rejected: rejectWithSanitizedRequestError,
   });
 
   return client;

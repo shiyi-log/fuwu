@@ -8,5 +8,5 @@
   "manifestKey": "releases/sample-app/v0.0.1/manifest.json",
   "manifestSha256": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "immutable": true,
-  "verificationSource": "release-storage"
+  "verificationSource": "heyue-release-storage"
 }

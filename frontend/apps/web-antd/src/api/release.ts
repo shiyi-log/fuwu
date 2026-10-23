@@ -184,10 +184,28 @@ export interface StageRemoteReleasePayload {
   manifest: Record<string, unknown>;
 }
 
+const DEFAULT_STAGE_REMOTE_TIMEOUT_MS = 15 * 60 * 1000;
+const MAX_STAGE_REMOTE_TIMEOUT_MS = 60 * 60 * 1000;
+
+/**
+ * Remote staging downloads Docker archives on the server and may take several
+ * minutes. Keep the timeout configurable for slower deployments while
+ * bounding it so a misconfigured Vite variable cannot leave a request open
+ * indefinitely.
+ */
+export function getStageRemoteTimeoutMs(value = import.meta.env.VITE_FUWU_STAGE_REMOTE_TIMEOUT_MS) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 60_000) {
+    return DEFAULT_STAGE_REMOTE_TIMEOUT_MS;
+  }
+  return Math.min(Math.floor(parsed), MAX_STAGE_REMOTE_TIMEOUT_MS);
+}
+
 export async function stageRemoteReleaseApi(payload: StageRemoteReleasePayload) {
   const id = requestId();
   return requestClient.post('/release-storage/stage-remote', payload, {
     headers: { 'Idempotency-Key': id, 'X-Request-ID': id },
+    timeout: getStageRemoteTimeoutMs(),
     responseReturn: 'body',
   });
 }

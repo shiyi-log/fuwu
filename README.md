@@ -21,7 +21,7 @@ chmod 700 data/staging
 export FUWU_DATABASE="$PWD/data/fuwu.sqlite3"
 export FUWU_STAGING_DIR="$PWD/data/staging"
 uv run --frozen python -m fuwu_service.accounts bootstrap --database "$FUWU_DATABASE"
-FUWU_HOST=127.0.0.1 FUWU_PORT=8000 uv run --frozen fuwu-server
+FUWU_HOST=127.0.0.1 FUWU_PORT=8088 uv run --frozen fuwu-server
 ```
 
 管理员初始化为交互式流程，只需对新数据库执行一次。仓库根目录的 `fuwu.config.json` 内置首个超级管理员的非敏感配置；如需按该配置初始化，可将密码放在配置指定的环境变量中，再执行：
@@ -31,7 +31,7 @@ export FUWU_SUPERADMIN_PASSWORD='请在部署环境中设置的强密码'
 uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FUWU_DATABASE"
 ```
 
-密码不会写入配置文件、数据库、日志或 API 响应；也可以继续使用上面的交互式 `bootstrap` 命令。健康检查地址为 `http://127.0.0.1:8000/healthz`。本地默认使用 SQLite 和内存对象存储。
+密码不会写入配置文件、数据库、日志或 API 响应；也可以继续使用上面的交互式 `bootstrap` 命令。健康检查地址为 `http://127.0.0.1:8088/healthz`。本地默认使用 SQLite 和内存对象存储。
 
 超级管理员登录后可在“账号管理”中注册成员、配置角色/权限和项目范围、停用账号及重置成员密码；成员可在个人资料中使用当前密码修改自己的密码。密码、角色、权限、项目范围和停用状态变更会撤销受影响账号的现有会话。
 
@@ -61,7 +61,7 @@ docker compose ps
 docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts bootstrap --database /data/fuwu.sqlite3
 ```
 
-默认管理界面端口为 `3331`，API 端口为 `8000`。首次启动后通过交互命令创建管理员。对外部署应使用 HTTPS 反向代理，并限制 API 端口的网络访问。
+默认管理界面端口为 `3331`，API 宿主端口为 `8088`（容器内部仍为 `8000`）。首次启动后通过交互命令创建管理员。对外部署应使用 HTTPS 反向代理，并限制 API 端口的网络访问。
 
 Compose 可启动 MySQL 与 Redis 服务，但当前业务数据仍保存在 SQLite。切换数据库前，需要实现对应 repository adapter、迁移和读回验证。
 
