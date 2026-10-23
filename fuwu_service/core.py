@@ -929,6 +929,43 @@ class ReleaseService:
             raise ReleaseError("object_not_found", "download object was not found", 404)
         return {"name": name, "key": artifact["object_key"], "size": artifact["size"], "sha256": artifact["sha256"]}
 
+    def public_storage_download(self, key: str) -> tuple[dict[str, Any], bool]:
+        """Resolve an anonymous object-storage key through published records.
+
+        Heyue configures a project prefix such as ``releases/heyue`` and
+        appends the manifest keys returned by ``latest.json``.  Keep this
+        compatibility surface strictly mapped to the same published whitelist
+        as ``/api/downloads``; never proxy an arbitrary object-store key.
+        """
+        try:
+            normalized = safe_relative_path(key)
+        except ReleaseError:
+            raise ReleaseError("object_not_found", "download object was not found", 404) from None
+        prefix_parts = self.prefix.split("/")
+        parts = normalized.split("/")
+        if not prefix_parts or any(not part for part in prefix_parts) or parts[:len(prefix_parts)] != prefix_parts:
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        relative = parts[len(prefix_parts):]
+        if len(relative) != 3 or not relative[0] or not relative[1] or not relative[2]:
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        project, version_or_channel, name = relative
+        if version_or_channel in CHANNELS and name == "latest.json":
+            try:
+                return self.public_latest_download(project, version_or_channel), True
+            except ReleaseError as error:
+                if error.code in {"invalid_project", "invalid_channel", "storage_verification_failed"}:
+                    raise ReleaseError("object_not_found", "download object was not found", 404) from None
+                raise
+        if not version_or_channel.startswith("v"):
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        version = version_or_channel[1:]
+        try:
+            return self.public_download(project, version, name), False
+        except ReleaseError as error:
+            if error.code in {"invalid_project", "invalid_version", "invalid_asset_path"}:
+                raise ReleaseError("object_not_found", "download object was not found", 404) from None
+            raise
+
     def public_latest_download(self, project: str, channel: str) -> dict[str, Any]:
         """按数据库发行绑定解析当前 stable 指针，并返回存储中的原始字节。
 

@@ -128,6 +128,35 @@ class ApiHandler(BaseHTTPRequestHandler):
             if callable(close):
                 close()
 
+    def _public_storage_download(self, target: str) -> None:
+        # Heyue's object-storage client appends manifest/asset keys directly
+        # to its configured project prefix (for example
+        # /releases/heyue/v1.0.3/manifest.json). Resolve through the same
+        # published whitelist as the legacy /api/downloads route.
+        parts = [unquote(part) for part in target.split("/")]
+        if len(parts) < 2 or parts[0] != "" or parts[1] != "releases":
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        descriptor, is_latest = self.service.public_storage_download("/".join(parts[1:]))
+        response = self.service.open_public_download(descriptor)
+        try:
+            self.send_response(200)
+            content_type = "application/json" if is_latest else (mimetypes.guess_type(descriptor["name"])[0] or "application/octet-stream")
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(descriptor["size"]))
+            self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + descriptor["name"])
+            self.send_header("Cache-Control", "no-store, max-age=0" if is_latest else "public, max-age=31536000, immutable")
+            self.send_header("X-Fuwu-SHA256", descriptor["sha256"])
+            self.end_headers()
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+
     def _request_is_secure(self) -> bool:
         try:
             if ipaddress.ip_address(self.client_address[0]).is_loopback:
@@ -143,6 +172,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             parsed = urlsplit(self.path)
             if self.command == "GET" and parsed.path.startswith("/api/downloads/"):
                 self._public_download(parsed.path)
+                return
+            if self.command == "GET" and parsed.path.startswith("/releases/"):
+                self._public_storage_download(parsed.path)
                 return
             # Generate before reading a sensitive body.  Keep URL parsing in
             # this guarded block so malformed request targets still receive a

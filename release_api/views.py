@@ -117,5 +117,39 @@ def latest_download_view(request, project_id: str, channel: str):
     return response
 
 
+@csrf_exempt
+def storage_key_view(request, storage_key: str):
+    """Anonymous compatibility route for Heyue object-storage keys."""
+    if request.method != "GET":
+        return JsonResponse({"code": "method_not_allowed", "message": "method not allowed"}, status=405)
+    try:
+        descriptor, is_latest = get_service().public_storage_download("releases/" + storage_key)
+        upstream = get_service().open_public_download(descriptor)
+    except ReleaseError as error:
+        return JsonResponse({"code": error.code, "message": error.message}, status=error.status)
+    except Exception:
+        return JsonResponse({"code": "internal_error", "message": "internal server error"}, status=500)
+
+    def chunks():
+        try:
+            while True:
+                chunk = upstream.read(1024 * 1024)
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            close = getattr(upstream, "close", None)
+            if callable(close):
+                close()
+
+    content_type = "application/json" if is_latest else (mimetypes.guess_type(descriptor["name"])[0] or "application/octet-stream")
+    response = StreamingHttpResponse(chunks(), content_type=content_type)
+    response["Content-Length"] = str(descriptor["size"])
+    response["Content-Disposition"] = "attachment; filename*=UTF-8''" + descriptor["name"]
+    response["Cache-Control"] = "no-store, max-age=0" if is_latest else "public, max-age=31536000, immutable"
+    response["X-Fuwu-SHA256"] = descriptor["sha256"]
+    return response
+
+
 healthz = auth_login = auth_codes = auth_logout = user_info = api_view
 projects = releases = status = publish = rollback = audit = api_view
