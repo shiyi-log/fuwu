@@ -10,7 +10,7 @@
 | `0.0.2` | 本地标签 `v0.0.2` 与远端 Release 存在；远端历史及说明清理待完成 | 2026-10-20 | SQLite 表初始化幂等；未声明向 MySQL/Redis 迁移 | 增加账号、项目范围、项目导航、日志和服务设置；保持既有 v1 manifest 字段 | Release/PR 元数据只读复核完成；远端资料替换与标签工作流检查待完成 |
 | `0.0.3` | GitHub Release 已发布；`v0.0.3` 固定提交 `566603e` | 2026-10-21 | 保持 SQLite；无生产数据迁移声明 | 增加系统设置中的托管存储配置及项目构建说明；发行读取和 v1 manifest 保持兼容 | GitHub Actions 和 CD 发布工作流全部通过；本机无缓存 Docker 构建、Compose 健康、API 和登录/访问验证通过；云端主机部署、外部存储和生产环境未由此证明 |
 | `0.0.4` | GitHub Release 已发布；`v0.0.4` 固定提交 `cfc2de2` | 2026-10-21 | 保持 SQLite；无生产数据迁移声明 | 增加 GitHub 项目授权、远端 Release staging、根目录配置初始化和成员管理界面；保持既有发布与 v1 manifest 兼容 | 102 项 pytest、80 项子测试、Django/迁移、编译、前端 typecheck/build、CI/CD、Release 资产和源码归档校验通过；真实私有 PAT、对象存储、云端部署和生产验收不由此版本自动证明 |
-| `0.0.6` | 当前 `main` 本地候选 `2a1dcac`；正式 Release 待定 | 2026-10-23 | 保持 SQLite；无数据迁移 | 将 GitHub 授权统一为 `/api/settings/github-authorization` 全局接口；远端 staging、publish 和 v1 manifest 字段保持兼容 | 本地 focused/全量测试、Django check、迁移漂移检查和 diff check 结果单独记录；未由此版本证明真实 PAT、GitHub 私有 Release、对象存储、云端部署或 Heyue 客户端验收 |
+| `0.0.6` | 当前候选工作树；本轮准备创建正式标签与 Release | 2026-10-24 | 保持 SQLite；无数据迁移 | 将 GitHub 授权统一为 `/api/settings/github-authorization` 全局接口；增加 Heyue Python/shell Bootstrap；远端 staging、publish 和 v1 manifest 字段保持兼容 | 本地 `126 passed`、92 subtests、Django check、`uv build`、Bootstrap 编译和远端 8088/Bootstrap 只读验收通过；Heyue `v1.0.5` 发布与 stable 指针由联合发布流程单独记录 |
 
 ## 0.0.2 变更
 
@@ -46,6 +46,7 @@
 - 增加 `GET /api/release-storage/latest?project={id}`，服务端按项目登记的 repository 和全局 GitHub 授权选择最新 `draft=false`、`prerelease=false` Release，并校验远端 manifest 与资产清单。
 - 增加 `POST /api/release-storage/stage-remote` 的 `latest: true` 模式；服务端自动发现、下载和校验正式 Release 到受保护 staging，响应只返回脱敏发行摘要，不自动发布或更新 `latest.json`。
 - 发行管理页面增加“自动下载并 staging 最新正式 Release”操作，成功后预填普通 publish 表单；保留按 Tag 获取和手工确认路径。
+- 增加 Heyue 匿名 Bootstrap `/api/downloads/heyue/bootstrap.py` 及兼容的 `/api/downloads/heyue/bootstrap/install.sh`；引导固定使用 Fuwu stable 发行链，校验响应摘要、manifest、`SHA256SUMS`、Python 归档和归档元数据后才运行安装器，不依赖 GitHub、PAT、管理会话或 AWS 凭据。
 - 本次候选的本地验证为后端 `120 passed`、88 项子测试，前端 latest focused Vitest、typecheck、生产构建和编译检查通过；真实 GitHub 授权、远端部署和 Bark 线上 staging 仍单独记录。
 
 ## 0.0.6 远端验收补充

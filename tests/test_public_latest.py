@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import unittest
@@ -116,6 +117,82 @@ class PublicLatestTests(unittest.TestCase):
             self.assertIs(resolve("/api/downloads/heyue/stable/latest.json").func, views.latest_download_view)
             self.assertEqual(client.post("/api/downloads/heyue/stable/latest.json").status_code, 405)
 
+    def test_django_heyue_bootstrap_route_serves_fixed_anonymous_script(self) -> None:
+        client = Client()
+        with patch("release_api.views.get_service", return_value=self.service):
+            response = client.get("/api/downloads/heyue/bootstrap/install.sh")
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response["Content-Type"].startswith("text/x-shellscript"))
+            self.assertEqual(response["Cache-Control"], "no-store, max-age=0")
+            self.assertEqual(response["Content-Disposition"], "attachment; filename=install.sh")
+            self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+            self.assertEqual(response["X-Fuwu-SHA256"], hashlib.sha256(response.content).hexdigest())
+            self.assertEqual(int(response["Content-Length"]), len(response.content))
+            self.assertTrue(response.content.startswith(b"#!/usr/bin/env bash\n"))
+            self.assertIn(b'https://fuwu.1213.cc/api/downloads/heyue', response.content)
+            self.assertIn(b"shiyi-log/heyue", response.content)
+            self.assertIn(b"heyue-python-", response.content)
+            self.assertIn(b'PROJECT = "heyue"', response.content)
+            self.assertIn(b'REPOSITORY = "shiyi-log/heyue"', response.content)
+            self.assertNotIn(b"Authorization", response.content)
+            self.assertNotIn(b"AWS_ACCESS_KEY", response.content)
+            self.assertNotIn(b"AWS_SECRET_ACCESS_KEY", response.content)
+            self.assertNotIn(b"AWS_SESSION_TOKEN", response.content)
+            self.assertNotIn(b"github.com", response.content.lower())
+            syntax = subprocess.run(["bash", "-n"], input=response.content, capture_output=True, check=False)
+            self.assertEqual(syntax.returncode, 0, syntax.stderr.decode())
+
+            head = client.head("/api/downloads/heyue/bootstrap/install.sh")
+            self.assertEqual(head.status_code, 200)
+            self.assertEqual(int(head["Content-Length"]), len(response.content))
+            self.assertEqual(head["X-Fuwu-SHA256"], response["X-Fuwu-SHA256"])
+            self.assertEqual(head.content, b"")
+            self.assertEqual(client.post("/api/downloads/heyue/bootstrap/install.sh").status_code, 405)
+            self.assertIs(resolve("/api/downloads/heyue/bootstrap/install.sh").func, views.heyue_bootstrap_view)
+
+            python_response = client.get("/api/downloads/heyue/bootstrap.py")
+            self.assertEqual(python_response.status_code, 200)
+            self.assertTrue(python_response["Content-Type"].startswith("text/x-python"))
+            self.assertEqual(python_response["Content-Disposition"], "attachment; filename=heyue-bootstrap.py")
+            self.assertEqual(python_response["X-Fuwu-SHA256"], hashlib.sha256(python_response.content).hexdigest())
+            self.assertTrue(python_response.content.startswith(b"#!/usr/bin/env python3\n"))
+            self.assertIn(b"https://fuwu.1213.cc/api/downloads/heyue/bootstrap/install.sh", python_response.content)
+            self.assertNotIn(b"github_pat_", python_response.content)
+            self.assertNotIn(b"AKIA", python_response.content)
+            python_head = client.head("/api/downloads/heyue/bootstrap.py")
+            self.assertEqual(python_head.status_code, 200)
+            self.assertEqual(python_head["X-Fuwu-SHA256"], python_response["X-Fuwu-SHA256"])
+            self.assertEqual(client.post("/api/downloads/heyue/bootstrap.py").status_code, 405)
+            self.assertIs(resolve("/api/downloads/heyue/bootstrap.py").func, views.heyue_python_bootstrap_view)
+
+    def test_anonymous_python_source_chain_uses_latest_manifest_checksums_and_asset(self) -> None:
+        client = Client()
+        with patch("release_api.views.get_service", return_value=self.service):
+            latest_response = client.get("/api/downloads/heyue/stable/latest.json")
+            latest = json.loads(latest_response.content)
+            version = latest["version"]
+            manifest_response = client.get(f"/api/downloads/heyue/{version}/manifest.json")
+            manifest = json.loads(b"".join(manifest_response.streaming_content))
+            self.assertEqual(manifest["project"], "heyue")
+            self.assertEqual(manifest["repository"], "shiyi-log/heyue")
+            self.assertEqual(manifest["tag"], latest["tag"])
+            self.assertEqual(manifest["revision"], latest["revision"])
+            self.assertEqual(manifest["verificationSource"], "heyue-release-storage")
+            python_asset = manifest["assets"]["python"]
+            if isinstance(python_asset, list):
+                self.assertEqual(len(python_asset), 1)
+                python_asset = python_asset[0]
+            python_name = python_asset.get("path") or python_asset["name"]
+            sums_response = client.get(f"/api/downloads/heyue/{version}/SHA256SUMS")
+            sums = b"".join(sums_response.streaming_content).decode("utf-8")
+            self.assertIn(f"{python_asset['sha256']}  {python_name}", sums)
+            asset_response = client.get(f"/api/downloads/heyue/{version}/{python_name}")
+            asset = b"".join(asset_response.streaming_content)
+            self.assertEqual(len(asset), python_asset["size"])
+            self.assertEqual(hashlib.sha256(asset).hexdigest(), python_asset["sha256"])
+            self.assertEqual(asset_response["Cache-Control"], "public, max-age=31536000, immutable")
+            self.assertEqual(asset_response["X-Fuwu-SHA256"], python_asset["sha256"])
+
     def test_django_object_storage_key_routes_use_published_whitelist(self) -> None:
         client = Client()
         with patch("release_api.views.get_service", return_value=self.service):
@@ -154,6 +231,31 @@ class PublicLatestTests(unittest.TestCase):
             self.assertEqual(response.getheader("Content-Type"), "application/json")
             self.assertEqual(response.getheader("Cache-Control"), "no-store, max-age=0")
             self.assertEqual(json.loads(body)["manifestKey"], "releases/heyue/v1.0.2/manifest.json")
+            connection.request("GET", "/api/downloads/heyue/bootstrap/install.sh")
+            bootstrap = connection.getresponse()
+            bootstrap_body = bootstrap.read()
+            self.assertEqual(bootstrap.status, 200)
+            self.assertEqual(bootstrap.getheader("Content-Type"), "text/x-shellscript; charset=utf-8")
+            self.assertEqual(bootstrap.getheader("Cache-Control"), "no-store, max-age=0")
+            self.assertEqual(bootstrap.getheader("Content-Disposition"), "attachment; filename=install.sh")
+            self.assertEqual(bootstrap.getheader("X-Fuwu-SHA256"), hashlib.sha256(bootstrap_body).hexdigest())
+            self.assertTrue(bootstrap_body.startswith(b"#!/usr/bin/env bash\n"))
+            connection.request("HEAD", "/api/downloads/heyue/bootstrap/install.sh")
+            bootstrap_head = connection.getresponse()
+            self.assertEqual(bootstrap_head.status, 200)
+            self.assertEqual(bootstrap_head.getheader("Content-Length"), str(len(bootstrap_body)))
+            self.assertEqual(bootstrap_head.getheader("X-Fuwu-SHA256"), bootstrap.getheader("X-Fuwu-SHA256"))
+            self.assertEqual(bootstrap_head.read(), b"")
+            connection.request("POST", "/api/downloads/heyue/bootstrap/install.sh")
+            bootstrap_post = connection.getresponse()
+            bootstrap_post.read()
+            self.assertEqual(bootstrap_post.status, 405)
+            connection.request("GET", "/api/downloads/heyue/bootstrap.py")
+            python_bootstrap = connection.getresponse()
+            python_bootstrap_body = python_bootstrap.read()
+            self.assertEqual(python_bootstrap.status, 200)
+            self.assertEqual(python_bootstrap.getheader("Content-Type"), "text/x-python; charset=utf-8")
+            self.assertEqual(python_bootstrap.getheader("X-Fuwu-SHA256"), hashlib.sha256(python_bootstrap_body).hexdigest())
             connection.request("GET", "/api/downloads/heyue/1.0.2/latest.json")
             versioned = connection.getresponse()
             versioned.read()

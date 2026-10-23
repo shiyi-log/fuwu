@@ -16,6 +16,8 @@ urlpatterns = [
     path("api/projects", views.api_view),
     path("api/projects/<str:project_id>", views.api_view),
     path("api/releases", views.api_view),
+    path("api/downloads/heyue/bootstrap.py", views.heyue_python_bootstrap_view),
+    path("api/downloads/heyue/bootstrap/install.sh", views.heyue_bootstrap_view),
     re_path(r"^api/downloads/(?P<project_id>[^/]+)/(?P<channel>stable|beta)/latest\.json$", views.latest_download_view),
     path("api/downloads/<str:project_id>/<str:version>/<str:filename>", views.download_view),
     path("releases/<path:storage_key>", views.storage_key_view),

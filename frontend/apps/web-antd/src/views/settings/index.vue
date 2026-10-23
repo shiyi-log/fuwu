@@ -123,7 +123,7 @@ onBeforeUnmount(clearCredentials);
         </div>
         <div v-if="github?.permissionCheck" class="mb-3 flex flex-wrap items-center gap-2 text-sm">
           <Tag color="green">可读取：{{ github.permissionCheck.repository }}</Tag>
-          <Tag :color="github.permissionCheck.readOnly ? 'blue' : 'orange'">{{ github.permissionCheck.readOnly ? '账号仓库权限为只读' : '账号对仓库还有写入权限' }}</Tag>
+          <Tag :color="github.permissionCheck.readOnly ? 'blue' : 'orange'">{{ github.permissionCheck.readOnly ? '账号仓库权限为只读' : '账号对仓库有写入权限（读取已验证）' }}</Tag>
           <Button type="link" :loading="githubCheckSaving" @click="checkGithub">重新检查仓库权限</Button>
         </div>
         <Form layout="vertical">

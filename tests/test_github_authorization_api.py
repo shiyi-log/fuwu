@@ -72,7 +72,7 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         admin_token = self.login("admin", "Strong-Admin-Password-2026")
         secret = "github_pat_secret_value"
         identity = {"login": "release-bot", "node_id": "MDQ6VXNlcjE=", "scopes": ["repo"]}
-        permission_check = {"repository": "shiyi-log/heyue", "contents": "read", "metadata": "read", "readOnly": True}
+        permission_check = {"repository": "shiyi-log/heyue", "contents": "read", "metadata": "read", "readOnly": False}
         with patch("fuwu_service.api.verify_github_token", return_value=identity) as verify, \
              patch("fuwu_service.api.verify_github_repository_access", return_value=permission_check) as verify_repo:
             status, response = self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": secret})
@@ -81,7 +81,9 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         verify.assert_called_once_with(secret)
         verify_repo.assert_called_once_with(secret, "shiyi-log/heyue")
         self.assertEqual(response["permissionCheck"], permission_check)
-        self.assertEqual(self.call("GET", "/api/settings/github-authorization", token=admin_token)[1]["login"], "release-bot")
+        current = self.call("GET", "/api/settings/github-authorization", token=admin_token)[1]
+        self.assertEqual(current["login"], "release-bot")
+        self.assertEqual(current["permissionCheck"], permission_check)
         status, response = self.call("DELETE", "/api/settings/github-authorization", token=admin_token)
         self.assertEqual((status, response["authorized"]), (200, False))
         self.assertNotIn(secret, json.dumps(response))
@@ -181,7 +183,7 @@ class GitHubAuthorizationApiTests(unittest.TestCase):
         with patch("fuwu_service.api.verify_github_token", return_value=identity), \
              patch("fuwu_service.api.verify_github_repository_access", return_value=permission_check):
             self.assertEqual(self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": existing})[0], 200)
-        denied = ReleaseError("github_repository_permissions_insufficient", "GitHub token must have read-only repository access", 422)
+        denied = ReleaseError("github_repository_permissions_insufficient", "GitHub token must have repository read access", 422)
         with patch("fuwu_service.api.verify_github_token", return_value=identity), \
              patch("fuwu_service.api.verify_github_repository_access", side_effect=denied):
             status, response = self.call("POST", "/api/settings/github-authorization", token=admin_token, body={"token": replacement})

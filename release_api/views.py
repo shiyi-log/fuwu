@@ -11,6 +11,12 @@ from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
 from fuwu_service.api import handle_api, requires_generated_request_id
+from fuwu_service.bootstrap import (
+    heyue_bootstrap_script,
+    heyue_bootstrap_sha256,
+    heyue_python_bootstrap_script,
+    heyue_python_bootstrap_sha256,
+)
 from fuwu_service.core import RBAC, ReleaseError, ReleaseService, SQLiteRepository
 from fuwu_service.server import build_storage, request_identifier
 
@@ -117,6 +123,46 @@ def latest_download_view(request, project_id: str, channel: str):
     response["Content-Disposition"] = "attachment; filename*=UTF-8''latest.json"
     response["Cache-Control"] = "no-store, max-age=0"
     response["X-Fuwu-SHA256"] = descriptor["sha256"]
+    return response
+
+
+@csrf_exempt
+def heyue_bootstrap_view(request):
+    """Anonymous fixed bootstrap for a fresh Heyue host."""
+    if request.method not in {"GET", "HEAD"}:
+        response = JsonResponse({"code": "method_not_allowed", "message": "method not allowed"}, status=405)
+        response["Allow"] = "GET, HEAD"
+        return response
+    try:
+        body = heyue_bootstrap_script()
+    except RuntimeError:
+        return JsonResponse({"code": "bootstrap_unavailable", "message": "bootstrap asset is unavailable"}, status=503)
+    response = HttpResponse(body if request.method == "GET" else b"", content_type="text/x-shellscript; charset=utf-8")
+    response["Content-Length"] = str(len(body))
+    response["Content-Disposition"] = "attachment; filename=install.sh"
+    response["Cache-Control"] = "no-store, max-age=0"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["X-Fuwu-SHA256"] = heyue_bootstrap_sha256()
+    return response
+
+
+@csrf_exempt
+def heyue_python_bootstrap_view(request):
+    """Anonymous fixed Python entrypoint for a fresh Heyue host."""
+    if request.method not in {"GET", "HEAD"}:
+        response = JsonResponse({"code": "method_not_allowed", "message": "method not allowed"}, status=405)
+        response["Allow"] = "GET, HEAD"
+        return response
+    try:
+        body = heyue_python_bootstrap_script()
+    except RuntimeError:
+        return JsonResponse({"code": "bootstrap_unavailable", "message": "bootstrap asset is unavailable"}, status=503)
+    response = HttpResponse(body if request.method == "GET" else b"", content_type="text/x-python; charset=utf-8")
+    response["Content-Length"] = str(len(body))
+    response["Content-Disposition"] = "attachment; filename=heyue-bootstrap.py"
+    response["Cache-Control"] = "no-store, max-age=0"
+    response["X-Content-Type-Options"] = "nosniff"
+    response["X-Fuwu-SHA256"] = heyue_python_bootstrap_sha256()
     return response
 
 

@@ -20,5 +20,8 @@ package = true
 [tool.setuptools]
 packages = ["config", "release_api", "fuwu_service"]
 
+[tool.setuptools.package-data]
+fuwu_service = ["*.sh"]
+
 [tool.pytest.ini_options]
 pythonpath = ["."]

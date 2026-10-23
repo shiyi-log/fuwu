@@ -10,7 +10,7 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 源码版本 | `0.0.6` 本地候选；当前 `main` 提交 `2a1dcac`；`v0.0.4` 为上一版已记录发布 |
+| 源码版本 | `0.0.6` 当前候选工作树；本轮准备创建正式标签与 Release；`v0.0.4` 为上一版已记录发布 |
 | 版本格式 | 三段数字，每段一位；`0.0.9` 后进位为 `0.1.0` |
 | 后端 | Python 3.14、uv、轻量 HTTP 服务、Django 适配器 |
 | 前端 | Vben Admin 5.7.0、Vue 3、Ant Design Vue |
@@ -50,6 +50,8 @@
 | 远端发行发现与 staging | `GET /api/release-storage/latest`、`POST /api/release-storage/stage-remote` | `release.storage.publish`；项目下载使用全局 GitHub 授权和项目登记仓库 | 自动选择最新 `draft=false`、`prerelease=false` Release，读取并校验 manifest、SHA256SUMS 与资产后生成受保护 staging；`latest:true` 由服务端完成发现 | 只允许 GitHub HTTPS 域名；失败清理临时目录；不更新 latest；响应不含下载 URL 或凭据 | `fuwu_service/core.py`、`fuwu_service/api.py`、`tests/test_remote_stage.py`、`tests/test_management_api.py` |
 | 更新器读取 | 对象存储 HTTPS `GET .../latest.json`；服务代理 `GET /api/downloads/{project}/{channel}/latest.json` | 匿名只读 | stable latest 指向不可变 v1 manifest；服务代理校验数据库、manifest 和指针摘要 | 客户端验证 SHA256 后暂存；latest 不缓存 | `fuwu_service/core.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py` |
 | Fuwu 对外下载 | `GET /api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 由数据库发行记录解析 manifest、`SHA256SUMS` 和资产，再用服务端凭据流式读取；兼容 `vX.Y.Z` 版本段并归一化为数字版本 | 未发布版本、未知资产和路径遍历固定返回 404；不暴露对象存储凭据 | `fuwu_service/core.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py`、`tests/test_public_download.py` |
+| Heyue 匿名 Bootstrap | `GET`、`HEAD /api/downloads/heyue/bootstrap/install.sh` | 公开；固定 Fuwu 引导资源 | 返回带 `X-Fuwu-SHA256` 的固定 shell 引导；引导在本地校验 stable latest、manifest、SHA256SUMS 和 Python 归档后运行已校验安装器 | 只允许 GET/HEAD；资源不可用为 503；不接受 GitHub、对象键或凭据 | `fuwu_service/bootstrap.py`、`fuwu_service/heyue_bootstrap.sh`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py` |
+| Heyue Python Bootstrap | `GET`、`HEAD /api/downloads/heyue/bootstrap.py` | 公开；固定 Python 包装引导 | 先校验 shell 引导响应摘要，再进入完整 stable 发行链 | 只允许 GET/HEAD；资源不可用为 503；不接受 GitHub、对象键或凭据 | `fuwu_service/heyue_bootstrap.py`、`fuwu_service/bootstrap.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py` |
 
 详细字段、请求样例、权限、错误码与行为见 [API 接口文档](docs/API.md)。尚未生成独立 OpenAPI schema。
 

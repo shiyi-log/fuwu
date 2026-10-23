@@ -60,7 +60,7 @@ class GitHubTokenVerificationTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "GitHub authorization was rejected"):
             verify_github_token("github_pat_example", opener=opener)
 
-    def test_repository_access_requires_matching_repo_and_read_only_permissions(self):
+    def test_repository_access_requires_matching_repo_read_permission(self):
         opener = _Opener(_Response({
             "full_name": "shiyi-log/heyue",
             "permissions": {"pull": True, "push": False, "admin": False, "maintain": False, "triage": False},
@@ -75,11 +75,24 @@ class GitHubTokenVerificationTests(unittest.TestCase):
         self.assertEqual(opener.request.full_url, "https://api.github.com/repos/shiyi-log/heyue")
         self.assertEqual(opener.request.get_header("Authorization"), "Bearer github_pat_example")
 
-    def test_repository_access_rejects_missing_or_write_permissions(self):
-        for permissions in ({}, {"pull": False}, {"pull": True, "push": True}):
+    def test_repository_access_allows_account_write_permissions(self):
+        opener = _Opener(_Response({
+            "full_name": "shiyi-log/heyue",
+            "permissions": {"pull": True, "push": True, "admin": True},
+        }))
+        result = verify_github_repository_access("github_pat_example", "shiyi-log/heyue", opener=opener)
+        self.assertEqual(result, {
+            "repository": "shiyi-log/heyue",
+            "contents": "read",
+            "metadata": "read",
+            "readOnly": False,
+        })
+
+    def test_repository_access_rejects_missing_read_permission(self):
+        for permissions in ({}, {"pull": False}, {"push": True, "admin": True}):
             with self.subTest(permissions=permissions):
                 opener = _Opener(_Response({"full_name": "shiyi-log/heyue", "permissions": permissions}))
-                with self.assertRaisesRegex(ReleaseError, "read-only repository access"):
+                with self.assertRaisesRegex(ReleaseError, "repository read access"):
                     verify_github_repository_access("github_pat_example", "shiyi-log/heyue", opener=opener)
 
     def test_required_repository_is_configurable_without_accepting_arbitrary_urls(self):

@@ -55,6 +55,8 @@
 | `GET` | `/api/releases` | `release.storage.read` 和项目范围 | 200 |
 | `GET` | `/api/downloads/{project}/{channel}/latest.json` | 公开；仅已发布 stable 指针 | 200；未发布或校验失败为 404/502 |
 | `GET` | `/api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 200；对象不存在为 404 |
+| `GET`、`HEAD` | `/api/downloads/heyue/bootstrap/install.sh` | 公开；固定 Heyue 匿名安装引导 | 200；资产不可用为 503 |
+| `GET`、`HEAD` | `/api/downloads/heyue/bootstrap.py` | 公开；固定 Heyue Python 安装引导 | 200；资产不可用为 503 |
 | `GET` | `/releases/{storage-key}` | 公开；Heyue 对象存储兼容入口，仅已发布 stable 对象 | 200；未知键、遍历或未发布对象为 404 |
 | `GET` | `/api/release-storage/status` | `release.storage.read` 和项目范围 | 200 |
 | `GET` | `/api/release-storage/latest?project={id}` | `release.storage.publish` 和项目范围；按项目绑定仓库读取 GitHub | 200；没有正式 Release 为 404 |
@@ -94,7 +96,7 @@
 
 `PATCH /api/projects/{id}` 可更新非空的 `name`、`description`、`public_api`、`build_instructions` 和布尔 `active`。仓库绑定创建后不可修改，已有发行记录不会随项目说明变更而改写。
 
-GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/github-authorization` 管理，是所有项目远端 Release staging 共用的全局配置。请求需要 `settings.manage`；`POST`、`DELETE` 和 `POST /api/settings/github-authorization/check` 还必须使用 HTTPS（本机回环连接可用于初始化）。`POST` 请求仅接受 `{ "token": "..." }`，服务端调用 GitHub `/user` 校验账号身份并检查绑定仓库的读取权限；远端 staging 时会将项目仓库与登记值绑定，并使用该全局令牌访问 GitHub Release。响应只包含 `authorized`、`login`、`node_id`、`scopes`、`authorizedAt` 和不含凭据的 `permissionCheck` 元数据；令牌只保存在服务端配置的 0600 secrets 文件，不进入 SQLite、操作日志或任何 API 响应。`POST /api/settings/github-authorization/check` 重新校验既有授权而不刷新保存时间，`DELETE` 会撤销全局授权。
+GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/github-authorization` 管理，是所有项目远端 Release staging 共用的全局配置。请求需要 `settings.manage`；`POST`、`DELETE` 和 `POST /api/settings/github-authorization/check` 还必须使用 HTTPS（本机回环连接可用于初始化）。`POST` 请求仅接受 `{ "token": "..." }`，服务端调用 GitHub `/user` 校验账号身份并检查绑定仓库的读取权限；账号对仓库拥有写入或管理权限不会阻止读取检查，`permissionCheck.readOnly` 只反映账号权限状态。远端 staging 时会将项目仓库与登记值绑定，并使用该全局令牌访问 GitHub Release。响应只包含 `authorized`、`login`、`node_id`、`scopes`、`authorizedAt` 和不含凭据的 `permissionCheck` 元数据；令牌只保存在服务端配置的 0600 secrets 文件，不进入 SQLite、操作日志或任何 API 响应。`POST /api/settings/github-authorization/check` 重新校验既有授权而不刷新保存时间，`DELETE` 会撤销全局授权。
 
 ## 版本与发行查询
 
@@ -106,11 +108,17 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 
 `GET /api/release-storage/audit` 支持 `project` 与 `channel` 查询参数，最多返回最近 100 条发行和指针事件。记录包含事件类型、项目、版本、渠道、操作者、request ID、时间和经筛选的详情。
 
-`GET /api/downloads/{project}/{version}/{filename}` 是面向安装器和升级器的匿名 HTTPS 下载入口。服务端只解析数据库中已经发布的 `stable` 发行及其 `manifest.json`、`SHA256SUMS` 和资产名称，再使用服务端受保护的对象存储凭据流式读取；请求不能指定任意对象键，也不会返回存储凭据。版本段通常使用数字形式 `X.Y.Z`；为兼容 Heyue manifest key 中的 `vX.Y.Z`，服务端也接受带单个前缀 `v` 的同一版本并按数字版本校验，其他路径仍按固定错误拒绝。响应包含 `Content-Length`、`Content-Disposition`、长期不可变缓存和 `X-Fuwu-SHA256`，客户端仍应按 `SHA256SUMS` 或 manifest 再次校验。该入口用于对象存储未开放匿名策略的部署，下载者不需要 GitHub 或 AWS 授权。
+`GET /api/downloads/{project}/{version}/{filename}` 是面向安装器和升级器的匿名 HTTPS 下载入口。Heyue 的规范 base URL 为 `https://fuwu.1213.cc/api/downloads/heyue`，安装器先读取 `/stable/latest.json`，再按其 `manifestKey` 读取版本化 `manifest.json`、`SHA256SUMS` 和 `assets.python` 中声明的 `heyue-python-X.Y.Z.tar.gz`。服务端只解析数据库中已经发布的 `stable` 发行及其 manifest、校验文件和资产名称，再使用服务端受保护的对象存储凭据流式读取；请求不能指定任意对象键，也不会返回存储凭据。版本段通常使用数字形式 `X.Y.Z`；为兼容 Heyue manifest key 中的 `vX.Y.Z`，服务端也接受带单个前缀 `v` 的同一版本并按数字版本校验，其他路径仍按固定错误拒绝。响应包含 `Content-Length`、`Content-Disposition`、长期不可变缓存和 `X-Fuwu-SHA256`，客户端仍应按 `SHA256SUMS` 或 manifest 再次校验。该入口用于对象存储未开放匿名策略的部署，下载者不需要 GitHub 或 AWS 授权。
 
 `GET /api/downloads/{project}/{channel}/latest.json` 返回当前已发布 stable 渠道的指针 JSON。服务端同时核对数据库发行记录、不可变 `manifest.json` 和指针对象的摘要及字段绑定；`latest.json` 使用 `no-store`，客户端应在每次检查更新时重新获取，再按其中的 `manifestKey` 和摘要校验版本化 manifest。该接口与版本化资产接口共用服务端对象存储代理，因此匿名客户端不需要 GitHub 或 AWS 授权；beta 指针不会通过匿名下载接口暴露。
 
+`GET /api/downloads/heyue/bootstrap/install.sh` 返回 Fuwu 随服务发布的固定、小型 Bash 引导，并带有 `X-Fuwu-SHA256`。引导默认绑定 `https://fuwu.1213.cc/api/downloads/heyue`；测试其他 Fuwu HTTPS 部署时，必须同时显式设置 `FUWU_BASE` 和 `FUWU_BOOTSTRAP_ALLOW_CUSTOM_BASE=1`。它不接受对象键、GitHub 地址或任何凭据。运行时依次匿名读取 stable `latest.json`、版本化 `manifest.json`、`SHA256SUMS` 和 manifest 声明的 Python 资产，校验项目、仓库、版本、标签、revision、摘要、大小、路径和归档成员后，才执行已校验 Python 包中的 `scripts/install_heyue.sh`，并强制安装器继续使用 Fuwu 的匿名对象存储来源。引导和该读取链不会写入或回滚 `latest.json`；脚本响应使用 `no-store`，版本化发行对象仍使用长期 immutable 缓存。
+
+`GET /api/downloads/heyue/bootstrap.py` 返回固定的 Python 包装引导，带有同样的 `X-Fuwu-SHA256` 和 `no-store` 响应头。它只下载并校验本地 `bootstrap/install.sh` 响应后再运行，适用于已具备 `python3` 的全新主机；完整发行校验和安装器执行仍由已校验的 shell 引导完成。
+
 `GET /releases/{storage-key}` 是 Heyue 对象存储客户端的兼容入口。客户端可将 `latest.json` 返回的 `manifestKey` 或 manifest 中已发布资产的 `key` 直接拼接到配置的项目前缀；Fuwu 会将 `releases/{project}/vX.Y.Z/...` 与稳定发行数据库记录和对象摘要逐项绑定，只允许 `latest.json`、`manifest.json`、`SHA256SUMS` 及 manifest 声明的资产。该入口不接受任意对象键、绝对路径、`.`/`..` 段或反斜杠；latest 使用 `no-store`，不可变版本对象使用长期 immutable 缓存并返回 `X-Fuwu-SHA256`。旧 `/api/downloads/...` 入口继续保留。
+
+Heyue 的匿名安装契约不依赖独立的 `install.tar.gz` 或 GitHub 下载地址。当前 Python 归档内包含 `scripts/install_heyue.sh`，安装器应在完成 latest、manifest、SHA256SUMS、项目身份、版本身份、归档路径、大小和摘要校验后，再从临时目录执行该固定入口。任一 Fuwu 读取或校验失败都必须直接失败，不得回退到 GitHub 或其他未登记下载源。Fuwu 不提供写入、发布或回滚能力给匿名客户端；stable 指针只能由受保护的管理发布流程更新。
 
 ## 发布
 

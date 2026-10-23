@@ -86,7 +86,7 @@ def _validate_scopes(value: Any) -> list[str]:
 
 
 def github_required_repository(env: Mapping[str, str] | None = None) -> str:
-    """Return the repository whose read-only PAT access is checked on save."""
+    """Return the repository whose read access is checked on save."""
 
     env = os.environ if env is None else env
     value = env.get("FUWU_GITHUB_REQUIRED_REPOSITORY", DEFAULT_REQUIRED_REPOSITORY)
@@ -155,13 +155,15 @@ def verify_github_token(token: str, *, opener: _Opener | None = None, timeout: f
 
 
 def verify_github_repository_access(token: str, repository: str, *, opener: _Opener | None = None, timeout: float = 10.0) -> dict[str, Any]:
-    """Require read-only repository access and return safe check metadata.
+    """Require repository read access and return safe check metadata.
 
     GitHub exposes repository permissions for an authenticated caller.  A
-    fine-grained token with Contents: Read-only has ``pull=true`` and no
-    repository write permission.  Metadata is always read-only for this API;
-    it is recorded as a safe contract marker rather than exposing GitHub's
-    response or the token.
+    caller with ``pull=true`` can read releases, while the same account may
+    legitimately have ``push`` or ``admin`` access on the repository.  Those
+    account permissions do not describe the token's scope and must not make a
+    valid download authorization fail.  Metadata is always read-only for this
+    API; the ``readOnly`` marker reports the account's write capability without
+    exposing GitHub's response or the token.
     """
 
     token = _validate_token(token)
@@ -190,14 +192,15 @@ def verify_github_repository_access(token: str, repository: str, *, opener: _Ope
         raise ReleaseError("github_repository_access_denied", "GitHub account cannot access the project repository", 422)
     permissions = payload.get("permissions")
     if not isinstance(permissions, Mapping):
-        raise ReleaseError("github_repository_permissions_insufficient", "GitHub token must have read-only repository access", 422)
-    if permissions.get("pull") is not True or any(permissions.get(name) is True for name in ("push", "admin", "maintain", "triage")):
-        raise ReleaseError("github_repository_permissions_insufficient", "GitHub token must have read-only repository access", 422)
+        raise ReleaseError("github_repository_permissions_insufficient", "GitHub token must have repository read access", 422)
+    if permissions.get("pull") is not True:
+        raise ReleaseError("github_repository_permissions_insufficient", "GitHub token must have repository read access", 422)
+    has_write_access = any(permissions.get(name) is True for name in ("push", "admin", "maintain", "triage"))
     return {
         "repository": repository,
         "contents": "read",
         "metadata": "read",
-        "readOnly": True,
+        "readOnly": not has_write_access,
     }
 
 
@@ -298,13 +301,13 @@ class GitHubAuthorizationStore:
             repository = check.get("repository")
             if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
                 raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
-            if check.get("contents") != "read" or check.get("metadata") != "read" or check.get("readOnly") is not True:
+            if check.get("contents") != "read" or check.get("metadata") != "read" or not isinstance(check.get("readOnly"), bool):
                 raise ReleaseError("github_credentials_unavailable", "GitHub credential storage is unavailable", 503)
             result["permissionCheck"] = {
                 "repository": repository,
                 "contents": "read",
                 "metadata": "read",
-                "readOnly": True,
+                "readOnly": check["readOnly"],
             }
         return result
 

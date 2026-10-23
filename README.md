@@ -75,6 +75,7 @@ Compose 可启动 MySQL 与 Redis 服务，但当前业务数据仍保存在 SQL
 
 - [项目台账](PROJECT_LEDGER.md)
 - [API 接口文档](docs/API.md)
+- [Heyue 匿名安装与源码归档说明](docs/HEYUE_BUILD_INSTRUCTIONS.md)
 - [启动与部署说明](docs/DEPLOYMENT.md)
 - [发行一致性说明](docs/PUBLISH_CONSISTENCY.md)
 - [版本记录](docs/VERSION_HISTORY.md)

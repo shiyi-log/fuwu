@@ -15,6 +15,12 @@ from urllib.parse import parse_qs, unquote, urlsplit
 
 from .administration import administration_store
 from .api import handle_api, requires_generated_request_id
+from .bootstrap import (
+    heyue_bootstrap_script,
+    heyue_bootstrap_sha256,
+    heyue_python_bootstrap_script,
+    heyue_python_bootstrap_sha256,
+)
 from .core import MemoryObjectStore, RBAC, ReleaseError, ReleaseService, S3ObjectStore, SQLiteRepository
 from .storage_settings import build_managed_store
 
@@ -132,6 +138,49 @@ class ApiHandler(BaseHTTPRequestHandler):
             if callable(close):
                 close()
 
+    def _public_bootstrap(self) -> None:
+        self._public_bootstrap_asset(
+            heyue_bootstrap_script,
+            heyue_bootstrap_sha256,
+            content_type="text/x-shellscript; charset=utf-8",
+            filename="install.sh",
+        )
+
+    def _public_python_bootstrap(self) -> None:
+        self._public_bootstrap_asset(
+            heyue_python_bootstrap_script,
+            heyue_python_bootstrap_sha256,
+            content_type="text/x-python; charset=utf-8",
+            filename="heyue-bootstrap.py",
+        )
+
+    def _public_bootstrap_asset(self, loader, digest, *, content_type: str, filename: str) -> None:
+        if self.command not in {"GET", "HEAD"}:
+            payload = json.dumps({"code": "method_not_allowed", "message": "method not allowed"}).encode()
+            self.send_response(405)
+            self.send_header("Allow", "GET, HEAD")
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            if self.command != "HEAD":
+                self.wfile.write(payload)
+            return
+        try:
+            body = loader()
+        except RuntimeError:
+            raise ReleaseError("bootstrap_unavailable", "bootstrap asset is unavailable", 503) from None
+        self.send_response(200)
+        self.send_header("Content-Type", content_type)
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition", "attachment; filename=" + filename)
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Fuwu-SHA256", digest())
+        self.end_headers()
+        if self.command == "GET":
+            self.wfile.write(body)
+
     def _public_storage_download(self, target: str) -> None:
         # Heyue's object-storage client appends manifest/asset keys directly
         # to its configured project prefix (for example
@@ -174,6 +223,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         request_id = request_identifier(header_request_id)
         try:
             parsed = urlsplit(self.path)
+            if parsed.path == "/api/downloads/heyue/bootstrap.py":
+                self._public_python_bootstrap()
+                return
+            if parsed.path == "/api/downloads/heyue/bootstrap/install.sh":
+                self._public_bootstrap()
+                return
             if self.command == "GET" and parsed.path.startswith("/api/downloads/"):
                 self._public_download(parsed.path)
                 return
@@ -204,6 +259,7 @@ class ApiHandler(BaseHTTPRequestHandler):
         self._send(status, response)
 
     do_GET = _dispatch
+    do_HEAD = _dispatch
     do_POST = _dispatch
     do_PATCH = _dispatch
     do_DELETE = _dispatch
