@@ -43,6 +43,12 @@
 - 全局凭据文件只接受 `{"version":1,"account":...}` 结构；旧项目级或未知顶层结构会 fail closed，不会被误当作空授权。
 - 本版候选不包含真实生产 PAT、对象存储写入、云端部署或 Heyue 客户端验收；这些证据需要单独记录。
 
+## 0.0.6 远端验收补充
+
+- 远端 Release staging 在存在 asset ID 时优先使用 GitHub asset API，并继续校验 `SHA256SUMS`、manifest、大小和摘要；没有 asset ID 的旧元数据仍兼容经过主机校验的浏览器下载地址。
+- 增加匿名 Fuwu 下载入口 `/api/downloads/{project}/{version}/{filename}`。它只解析已发布 stable 发行中的 manifest、`SHA256SUMS` 和资产，并以服务端受保护凭据流式读取对象；客户端无需 GitHub 或 AWS 授权。
+- 2026-10-23 在远端发布 Heyue `1.0.2`，外部 HTTPS 下载代理对 Docker、前端、安装器、Python 和源码归档的 HTTP 200、文件大小和 SHA256 均已实测通过。S3 原生匿名策略仍是独立限制，不能用设置页连通性替代。
+
 ## 升级与发布说明
 
 - SQLite 初始化会幂等创建当前领域表，现有发行和渠道指针由 SQLite repository 保存。

@@ -49,6 +49,7 @@
 | GitHub 全局授权 | `/api/settings/github-authorization` | `settings.manage`；写操作需安全连接 | 校验 GitHub 账号；只返回安全身份元数据；远端 staging 按项目登记仓库使用该授权 | PAT 不进入数据库、日志或 API 响应；撤销全局授权并清除受保护凭据记录 | `fuwu_service/github_auth.py`、`fuwu_service/api.py`、`tests/test_github_authorization_api.py` |
 | 远端发行 staging | `POST /api/release-storage/stage-remote` | `release.storage.publish`；项目下载使用项目授权 | GitHub Release 资产、SHA256SUMS 与 manifest 校验后生成受保护 staging | 只允许 GitHub HTTPS 域名；失败清理临时目录；不更新 latest | `fuwu_service/core.py`、`tests/test_remote_stage.py` |
 | 更新器读取 | 对象存储 HTTPS `GET .../latest.json` | 匿名只读 | 渠道 latest 指向不可变 v1 manifest | 客户端验证 SHA256 后暂存 | `fuwu_service/core.py`、兼容性测试 |
+| Fuwu 对外下载 | `GET /api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 由数据库发行记录解析 manifest、`SHA256SUMS` 和资产，再用服务端凭据流式读取 | 未发布版本、未知资产和路径遍历固定返回 404；不暴露对象存储凭据 | `fuwu_service/core.py`、`fuwu_service/server.py`、`tests/test_public_download.py` |
 
 详细字段、请求样例、权限、错误码与行为见 [API 接口文档](docs/API.md)。尚未生成独立 OpenAPI schema。
 
@@ -77,6 +78,7 @@
 
 | 日期 | 范围 | 结果 | 限制 |
 | --- | --- | --- | --- |
+| 2026-10-23 | Heyue v1.0.2 远端 Fuwu 发布与公开下载 | 远端 Fuwu 从绑定 Release 下载并校验 5 个资产，发布 HTTP 201；稳定发行记录、manifest、`SHA256SUMS` 和不可变对象已写入 S3；线上服务 revision `d64a89b` 在 `127.0.0.1:8088` 提供匿名 `/api/downloads/heyue/1.0.2/...`；外部 HTTPS 对 Docker、前端、安装器、Python 和源码归档均返回 HTTP 200，大小与 SHA256 全部匹配；项目构建说明已改为 Fuwu 地址且不含 GitHub 下载 URL | S3 bucket 原生匿名 GET 仍返回 403，因此公开下载由 Fuwu 代理流式提供；未将管理员账号、PAT、AWS 密钥或其他凭据写入记录；Heyue 客户端实际安装/升级仍需独立验收 |
 | 2026-10-21 | 0.0.3 正式发布本机验证 | 发布提交 `566603e` 的功能代码沿用已验证基线；82 项 pytest、Django check、迁移漂移检查、Python 编译和 `git diff --check` 通过；无缓存重建 `fuwu-api:0.0.3` 与 `fuwu-frontend:0.0.3`，前端使用 Node.js 22.18.0 / pnpm 10.33.0 构建；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API `/healthz`、登录、用户信息、登出和前端首页访问通过，未认证 `/api/` 代理按预期返回 401 | 本机 SQLite 初始化账号仅用于验收并在结束时清除；MySQL/Redis 未接入业务仓库；云端主机状态未检查；真实对象存储和外网 HTTPS 未验证 |
 | 2026-10-21 | 0.0.4 实现与发布验收 | `HEAD cfc2de2` 精确提交；`uv run --frozen pytest -q` 为 102 passed、80 subtests passed；Django check、迁移漂移检查、Python compileall、`git diff --check`、前端 typecheck/build、`docker-compose config` 和 API/frontend 无缓存镜像构建均通过；CI run `39505736490`、CD run `39505984483` 成功；GitHub `v0.0.4` Release 含源码归档与 `SHA256SUMS`，归档校验通过；远端 staging 的 checksum、manifest、清理、授权 header 与普通 publish 消费由 mock GitHub 测试覆盖 | 未使用真实 GitHub PAT 验证私有 Release；未执行真实对象存储写入、云端部署或生产客户端验收；本机未使用仓库声明的 Node.js 22.18.0 / pnpm 10.33.0 进行交互式前端构建，但 Docker 构建使用声明版本 |
 | 2026-10-21 | GitHub `v0.0.3` 发布工作流 | CD run `39484401604` 成功：精确标签校验、成功 CI 复用、源码归档、`SHA256SUMS` 校验和复核及 GitHub Release 创建全部通过 | 仅证明 GitHub Release 与源代码包；不代表云端部署或真实对象存储验收 |
