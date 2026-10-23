@@ -11,7 +11,7 @@
 | `0.0.3` | GitHub Release 已发布；`v0.0.3` 固定提交 `566603e` | 2026-10-21 | 保持 SQLite；无生产数据迁移声明 | 增加系统设置中的托管存储配置及项目构建说明；发行读取和 v1 manifest 保持兼容 | GitHub Actions 和 CD 发布工作流全部通过；本机无缓存 Docker 构建、Compose 健康、API 和登录/访问验证通过；云端主机部署、外部存储和生产环境未由此证明 |
 | `0.0.4` | GitHub Release 已发布；`v0.0.4` 固定提交 `cfc2de2` | 2026-10-21 | 保持 SQLite；无生产数据迁移声明 | 增加 GitHub 项目授权、远端 Release staging、根目录配置初始化和成员管理界面；保持既有发布与 v1 manifest 兼容 | 102 项 pytest、80 项子测试、Django/迁移、编译、前端 typecheck/build、CI/CD、Release 资产和源码归档校验通过；真实私有 PAT、对象存储、云端部署和生产验收不由此版本自动证明 |
 | `0.0.6` | 当前候选工作树；本轮准备创建正式标签与 Release | 2026-10-24 | 保持 SQLite；无数据迁移 | 将 GitHub 授权统一为 `/api/settings/github-authorization` 全局接口；增加 Heyue Python/shell Bootstrap；远端 staging、publish 和 v1 manifest 字段保持兼容 | 本地 `126 passed`、92 subtests、Django check、`uv build`、Bootstrap 编译和远端 8088/Bootstrap 只读验收通过；Heyue `v1.0.5` 发布与 stable 指针由联合发布流程单独记录 |
-| `0.0.7` | Bootstrap 修复候选；基于 `v0.0.6` 不改写旧标签 | 2026-10-24 | 保持 SQLite；无数据迁移 | Heyue Bootstrap 强绑定 stable 指针与不可变 manifest，并固定传入已核验版本和交互模式；stable/latest 指针保持兼容 | 本地 `127 passed`、92 subtests、嵌入 Python/Shell 语法和 argv 回归通过；远端部署与健康检查待本轮完成 |
+| `0.0.7` | GitHub Release 已发布；标签固定 `4844ae4` | 2026-10-24 | 保持 SQLite；无数据迁移 | Heyue Bootstrap 强绑定 stable 指针与不可变 manifest，并固定传入已核验版本和交互模式；stable/latest 指针保持兼容 | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、嵌入 Python/Shell 语法和 argv 回归通过；远端 8088 健康、8000 未监听、真实 Bootstrap `--help` 通过；Heyue stable 保持 `v1.0.4` |
 
 ## 0.0.2 变更
 

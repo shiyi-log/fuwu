@@ -17,7 +17,7 @@
 | 前端工具 | Node.js 22.18.0、pnpm 10.33.0 |
 | 业务数据 | 当前使用 SQLite；MySQL/Redis repository adapter 尚未实现 |
 | 对象存储 | 可替换接口；S3 兼容 provider 使用 AWS SigV4 |
-| 发布基线 | 当前本地 `main` 提交待本轮冻结；`v0.0.6` 为既有固定标签，`v0.0.7` 待本轮发布 |
+| 发布基线 | 当前本地 `main` 提交 `4844ae4`；`v0.0.7` 已发布，旧 `v0.0.6` 不改写 |
 | 本机部署证据 | `0.0.4` 的 API、前端镜像已无缓存重建；Docker 配置校验通过；完整运行态仍需单独记录 |
 | 云端部署证据 | 本次仅核对 GitHub 仓库与本机 Compose；云端主机和外部服务状态未检查 |
 | 远端引用 | `v0.0.3`、`v0.0.4` 标签和 GitHub Release 均已创建；云端部署仍需单独验收 |
@@ -63,6 +63,7 @@
 | 2026-10-23 | 修复 GitHub Release 远端 staging 的长耗时请求：前端单独配置 15 分钟超时、代理模板 20 分钟超时；仅 408/504 或无 HTTP 状态的网络中断保留 staging 引用继续发布；项目或频道切换会丢弃旧上下文；轻量服务吞掉已断开的响应管道错误；待确认的 staging 禁止重复下载 | 后端 `115 passed, 88 subtests passed`；前端 Vitest `32 passed`、typecheck、生产构建、Django check、migration check、compileall、`git diff --check` 均通过；未将此本地候选直接当作线上部署证据 |
 | 2026-10-24 | 增加按项目登记仓库自动发现最新正式 GitHub Release，并支持 `latest:true` 服务端下载到受保护 staging；前端提供一键发现、下载和预填发布表单，仍需显式 publish | 后端全量 `120 passed`、88 项子测试；前端 latest focused Vitest、typecheck、生产构建和 `git diff --check` 通过；远端部署与 Bark 线上 staging 待本轮单独验收 |
 | 2026-10-24 | 兼容 Heyue 对象键映射到匿名 API 时的 `vX.Y.Z` 版本路径；只归一化单个前缀 `v`，仍由核心版本校验和已发布资产白名单决定 | 本地公开下载、Django、轻量 HTTP 路由 `9 passed`；远端 `4354f28` 重启后 `v1.0.4` manifest/SHA256SUMS HTTP 200；8000 未监听 |
+| 2026-10-24 | 发布 Fuwu `v0.0.7` 并修复 Heyue Bootstrap 的 stable/manifest 身份绑定与固定安装 argv；远端运行文件同步到 `4844ae4` | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python Bootstrap 语法和真实远端 `--help` 演练通过；远端 `127.0.0.1:8088` 健康、8000 未监听；Heyue stable 保持 `v1.0.4` |
 
 当前包版本来自 `pyproject.toml`；版本摘要、兼容性、迁移和验证状态见[版本记录](docs/VERSION_HISTORY.md)。标签或镜像存在不等于 CI、真实对象存储或外部客户端验收通过。
 
@@ -88,6 +89,7 @@
 | 日期 | 范围 | 结果 | 限制 |
 | --- | --- | --- | --- |
 | 2026-10-23 | Heyue v1.0.2 远端 Fuwu 发布与公开下载 | 远端 Fuwu 从绑定 Release 下载并校验 5 个资产，发布 HTTP 201；稳定发行记录、manifest、`SHA256SUMS` 和不可变对象已写入 S3；线上服务 revision `d64a89b` 在 `127.0.0.1:8088` 提供匿名 `/api/downloads/heyue/1.0.2/...`；外部 HTTPS 对 Docker、前端、安装器、Python 和源码归档均返回 HTTP 200，大小与 SHA256 全部匹配；项目构建说明已改为 Fuwu 地址且不含 GitHub 下载 URL | S3 bucket 原生匿名 GET 仍返回 403，因此公开下载由 Fuwu 代理流式提供；未将管理员账号、PAT、AWS 密钥或其他凭据写入记录；Heyue 客户端实际安装/升级仍需独立验收 |
+| 2026-10-24 | Fuwu `v0.0.7` 远端部署与 Bootstrap 验收 | 远端运行文件 SHA256 与提交 `4844ae4` 一致；进程恢复在 `127.0.0.1:8088`，`/healthz` HTTP 200，`8000` 无监听；匿名 Bootstrap `--help` 真实执行返回 0；近期日志错误模式 0，敏感凭据模式 0 | Heyue `v1.0.5` 尚未冻结；stable/latest 保持 Heyue `v1.0.4` |
 | 2026-10-21 | 0.0.3 正式发布本机验证 | 发布提交 `566603e` 的功能代码沿用已验证基线；82 项 pytest、Django check、迁移漂移检查、Python 编译和 `git diff --check` 通过；无缓存重建 `fuwu-api:0.0.3` 与 `fuwu-frontend:0.0.3`，前端使用 Node.js 22.18.0 / pnpm 10.33.0 构建；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API `/healthz`、登录、用户信息、登出和前端首页访问通过，未认证 `/api/` 代理按预期返回 401 | 本机 SQLite 初始化账号仅用于验收并在结束时清除；MySQL/Redis 未接入业务仓库；云端主机状态未检查；真实对象存储和外网 HTTPS 未验证 |
 | 2026-10-21 | 0.0.4 实现与发布验收 | `HEAD cfc2de2` 精确提交；`uv run --frozen pytest -q` 为 102 passed、80 subtests passed；Django check、迁移漂移检查、Python compileall、`git diff --check`、前端 typecheck/build、`docker-compose config` 和 API/frontend 无缓存镜像构建均通过；CI run `39505736490`、CD run `39505984483` 成功；GitHub `v0.0.4` Release 含源码归档与 `SHA256SUMS`，归档校验通过；远端 staging 的 checksum、manifest、清理、授权 header 与普通 publish 消费由 mock GitHub 测试覆盖 | 未使用真实 GitHub PAT 验证私有 Release；未执行真实对象存储写入、云端部署或生产客户端验收；本机未使用仓库声明的 Node.js 22.18.0 / pnpm 10.33.0 进行交互式前端构建，但 Docker 构建使用声明版本 |
 | 2026-10-21 | GitHub `v0.0.3` 发布工作流 | CD run `39484401604` 成功：精确标签校验、成功 CI 复用、源码归档、`SHA256SUMS` 校验和复核及 GitHub Release 创建全部通过 | 仅证明 GitHub Release 与源代码包；不代表云端部署或真实对象存储验收 |
