@@ -147,7 +147,7 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 
 重复 `requestId` 只有在操作、项目、渠道、操作者和规范化请求内容均相同时才幂等。首次发布返回 `201`；相同请求重放返回 `200`。冲突重用返回 `409 idempotency_conflict`。
 
-对外 v1 manifest 保留 `schemaVersion`、`repository`、`version`、`tag`、`revision`、`releaseId`、`publishedAt`、`draft`、`prerelease`、`assets`、`checksums`、`verifiedAt` 和 `verificationSource` 字段。`latest.json` 指向已存在的不可变 manifest 并携带其 SHA256。客户端通过匿名 HTTPS 获取 latest、manifest 与制品，并在暂存前校验 SHA256；客户端不接收写入凭据。
+对外 v1 manifest 保留 `schemaVersion`、`repository`、`version`、`tag`、`revision`、`releaseId`、`publishedAt`、`draft`、`prerelease`、`assets`、`checksums`、`verifiedAt` 和 `verificationSource` 字段；其中 `verificationSource` 固定为 `heyue-release-storage`。`latest.json` 指向已存在的不可变 manifest 并携带其 SHA256。客户端通过匿名 HTTPS 获取 latest、manifest 与制品，并在暂存前校验 SHA256；客户端不接收写入凭据。
 
 ## 回滚
 
