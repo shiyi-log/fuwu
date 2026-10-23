@@ -71,7 +71,10 @@ def download_view(request, project_id: str, version: str, filename: str):
         return JsonResponse({"code": "method_not_allowed", "message": "method not allowed"}, status=405)
     try:
         service = get_service()
-        descriptor = service.public_download(project_id, version, filename)
+        # Existing Heyue clients may map ``releases/.../vX.Y.Z/...`` onto
+        # this API prefix.  Normalize only the leading version marker before
+        # the core validator enforces the exact numeric format.
+        descriptor = service.public_download(project_id, version[1:] if version.startswith("v") else version, filename)
         upstream = service.open_public_download(descriptor)
     except ReleaseError as error:
         return JsonResponse({"code": error.code, "message": error.message}, status=error.status)

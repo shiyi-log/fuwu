@@ -107,7 +107,11 @@ class ApiHandler(BaseHTTPRequestHandler):
         if is_latest:
             descriptor = self.service.public_latest_download(parts[3], parts[4])
         else:
-            descriptor = self.service.public_download(parts[3], parts[4], parts[5])
+            # Heyue object-storage keys carry a leading ``v`` in the
+            # immutable version segment.  Keep the API download contract
+            # numeric while accepting that existing client spelling.
+            version = parts[4][1:] if parts[4].startswith("v") else parts[4]
+            descriptor = self.service.public_download(parts[3], version, parts[5])
         response = self.service.open_public_download(descriptor)
         try:
             self.send_response(200)
