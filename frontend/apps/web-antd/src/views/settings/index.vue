@@ -9,6 +9,7 @@ import { authorizeGithubApi, checkGithubAuthorizationApi, getGithubAuthorization
 const { hasAccessByCodes } = useAccess();
 const canManage = computed(() => hasAccessByCodes(['settings.manage']));
 const loading = ref(false); const saving = ref(false); const error = ref('');
+const settingsReady = ref(false);
 const storageSaving = ref(false);
 const model = reactive({ appName: 'fuwu', timezone: 'Asia/Shanghai', defaultChannel: 'stable' as 'beta' | 'stable', logRetentionDays: 90, version: 'unknown' });
 const metadata = ref<Record<string, boolean | null | number | string>>({});
@@ -30,15 +31,17 @@ function clearCredentials() {
 
 async function load() {
   loading.value = true;
+  settingsReady.value = false;
+  error.value = '';
   try {
     const data = await getSystemSettingsApi();
     Object.assign(model, { appName: data.appName, timezone: data.timezone, defaultChannel: data.defaultChannel, logRetentionDays: data.logRetentionDays, version: data.version });
     metadata.value = data.readOnly;
     Object.assign(storage, data.storage || {});
     github.value = canManage.value ? await getGithubAuthorizationApi() : undefined;
-    error.value = '';
+    settingsReady.value = true;
   }
-  catch { error.value = '系统设置加载失败。'; }
+  catch { error.value = '系统设置加载失败，请重新登录后重试。'; }
   finally { loading.value = false; }
 }
 async function save() {
@@ -114,8 +117,8 @@ onBeforeUnmount(clearCredentials);
       <Card v-if="canManage" title="GitHub 账号授权" class="xl:col-span-2">
         <div class="mb-3 text-sm text-gray-500">授权全局 GitHub 账号后，远端发行下载可以读取 GitHub 仓库的私有 Release。令牌只会发送到服务端并保存在受保护文件中。</div>
         <div class="mb-3 flex flex-wrap items-center gap-2">
-          <Tag :color="github?.authorized ? 'green' : 'default'">{{ github?.authorized ? `已授权：${github.login}` : '未授权' }}</Tag>
-          <Tag :color="github?.authorized ? 'blue' : 'default'">{{ github?.authorized ? 'Token 已配置（不回显）' : 'Token 未配置' }}</Tag>
+          <Tag :color="github?.authorized ? 'green' : 'default'">{{ !settingsReady ? '未读取' : github?.authorized ? `已授权：${github.login}` : '未授权' }}</Tag>
+          <Tag :color="github?.authorized ? 'blue' : 'default'">{{ !settingsReady ? '未读取' : github?.authorized ? 'Token 已配置（掩码）' : 'Token 未配置' }}</Tag>
           <span v-if="github?.authorizedAt" class="text-xs text-gray-400">{{ github.authorizedAt }}</span>
         </div>
         <div v-if="github?.permissionCheck" class="mb-3 flex flex-wrap items-center gap-2 text-sm">
@@ -126,7 +129,7 @@ onBeforeUnmount(clearCredentials);
         <Form layout="vertical">
           <Form.Item label="GitHub Personal Access Token">
             <Input.Password v-model:value="githubToken" :maxlength="512" autocomplete="new-password" placeholder="仅用于校验和远端下载，不会回显" />
-            <div class="mt-1 text-xs text-gray-400">{{ github?.authorized ? '当前 Token 已配置；输入框保持为空。重新输入只用于轮换 Token。' : '当前尚未配置 Token。' }}</div>
+            <div class="mt-1 text-xs text-gray-400">{{ !settingsReady ? '状态未读取；请重新登录后重试。' : github?.authorized ? '当前 Token 已配置（掩码）；输入框保持为空。重新输入只用于轮换 Token。' : '当前尚未配置 Token。' }}</div>
           </Form.Item>
           <Space>
             <Button type="primary" :loading="githubSaving" @click="saveGithub">授权账号</Button>
@@ -146,11 +149,11 @@ onBeforeUnmount(clearCredentials);
             <Form.Item label="对象前缀" required><Input v-model:value="storage.prefix" :disabled="!canManage" autocomplete="off" placeholder="releases" /></Form.Item>
           </div>
           <div class="mb-3 flex flex-wrap items-center gap-2 text-sm">
-            <Tag :color="storage.credentialsConfigured ? 'green' : 'default'">{{ storage.credentialsConfigured ? '凭据已配置' : '凭据未配置' }}</Tag>
+            <Tag :color="storage.credentialsConfigured ? 'green' : 'default'">{{ !settingsReady ? '未读取' : storage.credentialsConfigured ? '凭据已配置（掩码）' : '凭据未配置' }}</Tag>
             <span v-if="storage.credentialSource" class="text-gray-500">来源：{{ storage.credentialSource }}</span>
-            <span v-if="canManage" class="text-gray-500">Access Key ID：{{ storage.credentialsConfigured ? (storage.accessKeyHint || '已配置（不回显）') : '未配置' }}</span>
-            <span v-if="canManage" class="text-gray-500">Secret Access Key：{{ storage.secretAccessKeyConfigured ? '已配置（不回显）' : '未配置' }}</span>
-            <span v-if="canManage" class="text-gray-500">Session Token：{{ storage.sessionTokenConfigured ? '已配置（不回显）' : '未配置（可选）' }}</span>
+            <span v-if="canManage" class="text-gray-500">Access Key ID：{{ !settingsReady ? '未读取' : storage.credentialsConfigured ? '已配置（掩码）' : '未配置' }}</span>
+            <span v-if="canManage" class="text-gray-500">Secret Access Key：{{ !settingsReady ? '未读取' : storage.secretAccessKeyConfigured ? '已配置（掩码）' : '未配置' }}</span>
+            <span v-if="canManage" class="text-gray-500">Session Token：{{ !settingsReady ? '未读取' : storage.sessionTokenConfigured ? '已配置（掩码）' : '未配置（可选）' }}</span>
             <span class="text-gray-500">输入框始终为空；重新输入仅用于轮换，保存后不会回显凭据</span>
           </div>
           <div class="grid grid-cols-1 gap-x-4 md:grid-cols-3">
