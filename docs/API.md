@@ -129,7 +129,7 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 }
 ```
 
-成功响应只返回 job 标识和状态；资产内容、凭据和远端响应不会写入日志。项目远端 staging 需要先在系统设置提交并验证全局 PAT；若未配置授权，服务端不会从请求体或项目记录读取凭据。
+普通 staging 成功响应只返回 job 标识和状态；使用 `latest=true` 时还会返回经过筛选的 `release` 摘要。资产内容、凭据和远端响应不会写入日志。项目远端 staging 需要先在系统设置提交并验证全局 PAT；若未配置授权，服务端不会从请求体或项目记录读取凭据。
 
 `POST /api/release-storage/publish` 只接受受保护的 staging/job 引用；拒绝任意路径、对象存储 URL、凭据、文件上传和未知字段。
 
