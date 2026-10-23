@@ -184,6 +184,82 @@ export interface StageRemoteReleasePayload {
   manifest: Record<string, unknown>;
 }
 
+export interface StageLatestReleasePayload {
+  project: string;
+  staging_ref: string;
+  latest: true;
+}
+
+export interface LatestGitHubRelease {
+  project: string;
+  repository: string;
+  tag: string;
+  version: string;
+  revision: string;
+  releaseId: number | string;
+  assets: string[];
+  manifest: Record<string, unknown>;
+}
+
+function releaseAssetNames(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => {
+      if (typeof item === 'string') return [item];
+      if (item && typeof item === 'object') {
+        const record = item as Record<string, unknown>;
+        const name = record.name ?? record.path;
+        return typeof name === 'string' ? [name] : [];
+      }
+      return [];
+    });
+  }
+  if (!value || typeof value !== 'object') return [];
+  return Object.values(value as Record<string, unknown>).flatMap((entry) => {
+    if (Array.isArray(entry)) return releaseAssetNames(entry);
+    if (entry && typeof entry === 'object') {
+      const record = entry as Record<string, unknown>;
+      if (typeof record.path === 'string') return [record.path];
+      return releaseAssetNames(entry);
+    }
+    return [];
+  });
+}
+
+/**
+ * Discover the repository's newest non-draft, non-prerelease GitHub Release.
+ * The service resolves GitHub credentials and fetches manifest/checksum
+ * metadata server-side; the browser only receives safe release metadata.
+ */
+export async function getLatestGitHubReleaseApi(project: string) {
+  const response = await requestClient.get<LatestGitHubRelease | { release?: LatestGitHubRelease }>(
+    '/release-storage/latest',
+    { params: { project }, responseReturn: 'body' },
+  );
+  const payload = (response && typeof response === 'object' && 'release' in response
+    ? response.release
+    : response) as Partial<LatestGitHubRelease> | undefined;
+  const manifest = payload?.manifest;
+  if (!payload || typeof payload !== 'object' || !manifest || typeof manifest !== 'object' || Array.isArray(manifest)) {
+    throw new Error('latest_release_invalid');
+  }
+  const manifestAssets = releaseAssetNames((manifest as Record<string, unknown>).assets);
+  const assets = manifestAssets.length > 0 ? manifestAssets : releaseAssetNames(payload.assets ?? (payload as Record<string, unknown>).assetNames);
+  const projectId = typeof payload.project === 'string' && payload.project ? payload.project : project;
+  if (!projectId || !payload.repository || !payload.tag || !payload.version || !payload.revision || payload.releaseId === undefined || assets.length === 0) {
+    throw new Error('latest_release_invalid');
+  }
+  return {
+    project: projectId,
+    repository: payload.repository,
+    tag: payload.tag,
+    version: payload.version,
+    revision: payload.revision,
+    releaseId: payload.releaseId,
+    assets: [...new Set(assets)],
+    manifest: manifest as Record<string, unknown>,
+  } satisfies LatestGitHubRelease;
+}
+
 const DEFAULT_STAGE_REMOTE_TIMEOUT_MS = 15 * 60 * 1000;
 const MAX_STAGE_REMOTE_TIMEOUT_MS = 60 * 60 * 1000;
 
@@ -202,6 +278,16 @@ export function getStageRemoteTimeoutMs(value = import.meta.env.VITE_FUWU_STAGE_
 }
 
 export async function stageRemoteReleaseApi(payload: StageRemoteReleasePayload) {
+  const id = requestId();
+  return requestClient.post('/release-storage/stage-remote', payload, {
+    headers: { 'Idempotency-Key': id, 'X-Request-ID': id },
+    timeout: getStageRemoteTimeoutMs(),
+    responseReturn: 'body',
+  });
+}
+
+/** Discover and stage the newest formal release entirely on the server. */
+export async function stageLatestReleaseApi(payload: StageLatestReleasePayload) {
   const id = requestId();
   return requestClient.post('/release-storage/stage-remote', payload, {
     headers: { 'Idempotency-Key': id, 'X-Request-ID': id },

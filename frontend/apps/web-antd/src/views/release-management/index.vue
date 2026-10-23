@@ -29,11 +29,13 @@ import {
 } from 'ant-design-vue';
 
 import {
+  getLatestGitHubReleaseApi,
   getReleaseAuditApi,
   getReleaseListApi,
   getReleaseStorageStatusApi,
   publishReleaseApi,
   rollbackReleaseApi,
+  stageLatestReleaseApi,
   stageRemoteReleaseApi,
 } from '#/api';
 
@@ -55,6 +57,7 @@ const selectedChannel = ref<ReleaseChannel>('stable');
 const publishOpen = ref(false);
 const remoteOpen = ref(false);
 const stageRemotePending = ref(false);
+const latestReleasePending = ref(false);
 const stageContextRevision = ref(0);
 const rollbackOpen = ref(false);
 const selectedRelease = ref<ReleaseRecord>();
@@ -133,8 +136,8 @@ const auditField = (value: unknown, key: unknown) => {
 };
 const statusColor = (value?: string) => {
   const status = String(value || '').toLowerCase();
-  if (['published', 'success', 'succeeded', 'verified', 'healthy', 'ready', 'validated', 'rolled_back', 'completed'].includes(status)) return 'green';
-  if (['failed', 'error', 'rejected', 'unreachable', 'unverified'].includes(status)) return 'red';
+  if (['completed', 'healthy', 'published', 'ready', 'rolled_back', 'succeeded', 'success', 'validated', 'verified'].includes(status)) return 'green';
+  if (['error', 'failed', 'rejected', 'unreachable', 'unverified'].includes(status)) return 'red';
   return 'orange';
 };
 const progressPercent = (value?: number) =>
@@ -217,6 +220,103 @@ function showRemoteModal() {
   remoteModel.manifest = '';
   remoteOpen.value = true;
 }
+
+function generatedStagingRef(project: string, tag: string) {
+  const normalizedProject = project.replaceAll(/[^A-Za-z0-9._-]/g, '-');
+  const normalizedTag = tag.replaceAll(/[^A-Za-z0-9._-]/g, '-');
+  return `job-${normalizedProject}-${normalizedTag}-${Date.now().toString(36)}`.slice(0, 128);
+}
+
+async function discoverLatestRelease() {
+  if (stageRemotePending.value) {
+    publishOpen.value = true;
+    message.warning('当前 staging 结果仍待确认，请先继续提交已有 staging 引用，不要重复下载。');
+    return;
+  }
+  const project = selectedProject.value;
+  const channel = selectedChannel.value;
+  const contextRevision = stageContextRevision.value;
+  if (!project) {
+    message.warning('当前没有选择项目。');
+    return;
+  }
+  latestReleasePending.value = true;
+  try {
+    const latest = await getLatestGitHubReleaseApi(project);
+    if (contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
+    remoteModel.tag = latest.tag;
+    remoteModel.staging_ref = generatedStagingRef(project, latest.tag);
+    remoteModel.assets = latest.assets.join(', ');
+    remoteModel.manifest = JSON.stringify(latest.manifest, null, 2);
+    remoteOpen.value = true;
+    message.success(`已发现最新正式 Release ${latest.tag}，请确认后下载到 staging。`);
+  } catch {
+    message.error('自动获取最新正式 Release 失败，请确认 GitHub 授权和项目仓库配置。');
+  } finally {
+    latestReleasePending.value = false;
+  }
+}
+
+async function stageLatestRelease() {
+  if (stageRemotePending.value) {
+    publishOpen.value = true;
+    message.warning('当前 staging 结果仍待确认，请先继续提交已有 staging 引用，不要重复下载。');
+    return;
+  }
+  const project = selectedProject.value;
+  const channel = selectedChannel.value;
+  const contextRevision = stageContextRevision.value;
+  if (!project) {
+    message.warning('当前没有选择项目。');
+    return;
+  }
+  const stagingRef = generatedStagingRef(project, 'latest');
+  latestReleasePending.value = true;
+  let latest: Awaited<ReturnType<typeof getLatestGitHubReleaseApi>> | undefined;
+  try {
+    // Resolve metadata first so a browser timeout can still resume publishing
+    // the exact staging job without starting a duplicate download.
+    latest = await getLatestGitHubReleaseApi(project);
+    if (contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
+    const staged = await stageLatestReleaseApi({ project, staging_ref: stagingRef, latest: true });
+    if (contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) {
+      message.warning('项目或频道已切换，已丢弃本次 staging 结果，请在当前项目重新发起操作。');
+      return;
+    }
+    stageRemotePending.value = false;
+    const stagedRelease = staged && typeof staged === 'object' && 'release' in staged
+      ? (staged as { release?: Record<string, unknown> }).release
+      : undefined;
+    const tag = typeof stagedRelease?.tag === 'string' ? stagedRelease.tag : latest.tag;
+    const version = typeof stagedRelease?.version === 'string' ? stagedRelease.version : latest.version;
+    const revision = typeof stagedRelease?.revision === 'string' ? stagedRelease.revision : latest.revision;
+    preparePublishFromManifest(
+      { ...latest.manifest, tag, version, revision },
+      tag,
+      stagingRef,
+      project,
+      channel,
+    );
+    publishOpen.value = true;
+    message.success(`已自动发现并下载最新正式 Release ${latest.tag} 到 staging，请继续提交发布。`);
+  } catch (error) {
+    if (contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
+    if (isStageOutcomeUncertain(error)) {
+      stageRemotePending.value = true;
+      if (latest) {
+        // Metadata was fetched before staging; preserving it lets the operator
+        // continue with publish when the server finished after a browser timeout.
+        preparePublishFromManifest(latest.manifest, latest.tag, stagingRef, project, channel);
+      }
+      publishOpen.value = true;
+      message.warning('最新 Release 的 staging 结果暂时无法确认；请稍后直接提交当前 staging 引用，不要重复下载。');
+      return;
+    }
+    message.error('自动下载最新正式 Release 失败，请确认 GitHub 授权、Release 资产和校验清单。');
+  } finally {
+    latestReleasePending.value = false;
+  }
+}
 function resetStagingState() {
   remoteOpen.value = false;
   stageRemotePending.value = false;
@@ -253,7 +353,7 @@ async function submitRemote() {
   const operationTag = remoteModel.tag;
   const operationStagingRef = remoteModel.staging_ref;
   const assets = remoteModel.assets.split(',').map((item) => item.trim()).filter(Boolean);
-  if (!operationTag || !operationStagingRef || !assets.length || !remoteModel.manifest.trim()) {
+  if (!operationTag || !operationStagingRef || assets.length === 0 || !remoteModel.manifest.trim()) {
     message.warning('请填写 Release tag、staging 引用、资产名称和 manifest JSON。');
     return;
   }
@@ -408,7 +508,7 @@ watch([selectedProject, selectedChannel], () => {
         </Select>
         <Button :loading="loading" @click="loadData">刷新</Button>
       </Space>
-      <Space v-if="canPublish"><Button @click="showRemoteModal">从 GitHub Release 获取</Button><Button type="primary" @click="showPublishModal">发布版本</Button></Space>
+      <Space v-if="canPublish"><Button :loading="latestReleasePending" @click="stageLatestRelease">自动下载并 staging 最新正式 Release</Button><Button @click="showRemoteModal">按 Tag 获取 Release</Button><Button type="primary" @click="showPublishModal">发布版本</Button></Space>
     </div>
 
     <Spin :spinning="loading">
@@ -474,6 +574,7 @@ watch([selectedProject, selectedChannel], () => {
 
     <Modal v-model:open="remoteOpen" :confirm-loading="submitting" ok-text="下载远端 Release" title="从 GitHub Release 获取" @ok="submitRemote">
       <Alert class="mb-4" message="服务端会按项目绑定的 GitHub 仓库读取 Release，并校验远端 SHA256SUMS；下载成功后仍需提交发布任务。" show-icon type="info" />
+      <Button class="mb-4" :loading="latestReleasePending" @click="discoverLatestRelease">自动填充最新正式 Release</Button>
       <Form layout="vertical">
         <Form.Item label="Release Tag" required><Input v-model:value="remoteModel.tag" placeholder="例如 v1.0.2" /></Form.Item>
         <Form.Item label="受保护 staging 引用" required><Input v-model:value="remoteModel.staging_ref" :maxlength="128" placeholder="例如 job-20261021-001" /></Form.Item>

@@ -198,6 +198,17 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                     items = sorted(items, key=lambda item: item["id"], reverse=True)[:100]
                 response = {"items": items}
             code = 200
+        elif path == "/api/release-storage/latest" and method == "GET":
+            category, action, route = "release", "latest", path
+            rbac.require(authorization, "release.storage.publish")
+            project_id = _allowed_project(rbac, authorization, query.get("project"))
+            project = service.repository.get_project(project_id)
+            if project is None:
+                raise ReleaseError("project_not_found", "project was not found", 404)
+            github_token = _github_authorizations().get_token()
+            response = service.discover_latest_github_release(project["repository"], github_token=github_token)
+            response["project"] = project_id
+            code = 200
         elif path == "/api/release-storage/stage-remote" and method == "POST":
             category, action, route = "release", "stage_remote", path
             rbac.require(authorization, "release.storage.publish")

@@ -91,6 +91,32 @@ class ManagementApiTests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(all(row["project_id"] == "alpha" for row in logs["items"]))
 
+    def test_latest_release_discovery_uses_project_repository_and_global_github_token(self):
+        token = self.login()
+        discovered = {
+            "repository": "owner/alpha",
+            "tag": "v0.0.1",
+            "version": "0.0.1",
+            "revision": "a" * 40,
+            "releaseId": "release-1",
+            "githubReleaseId": 123,
+            "publishedAt": "2026-10-24T00:00:00Z",
+            "draft": False,
+            "prerelease": False,
+            "assets": [{"name": "alpha.tar.gz", "size": 12}],
+            "assetNames": ["alpha.tar.gz"],
+            "manifest": {"schemaVersion": 1},
+        }
+        github_store = type("GithubStore", (), {"get_token": lambda _self: "ghs-test-token"})()
+        with patch("fuwu_service.api._github_authorizations", return_value=github_store), \
+             patch.object(self.service, "discover_latest_github_release", return_value=discovered) as discover:
+            status, result = self.call("GET", "/api/release-storage/latest", token=token, query={"project": "alpha"})
+        self.assertEqual(status, 200)
+        self.assertEqual(result["project"], "alpha")
+        self.assertEqual(result["tag"], "v0.0.1")
+        self.assertEqual(result["repository"], "owner/alpha")
+        discover.assert_called_once_with("owner/alpha", github_token="ghs-test-token")
+
     def test_operational_logs_use_safe_route_and_exclude_credentials(self):
         token = self.login()
         canary = "PASSWORD-CANARY-DO-NOT-LOG"

@@ -19,6 +19,7 @@ urlpatterns = [
     re_path(r"^api/downloads/(?P<project_id>[^/]+)/(?P<channel>stable|beta)/latest\.json$", views.latest_download_view),
     path("api/downloads/<str:project_id>/<str:version>/<str:filename>", views.download_view),
     path("api/release-storage/status", views.api_view),
+    path("api/release-storage/latest", views.api_view),
     path("api/release-storage/stage-remote", views.api_view),
     path("api/release-storage/publish", views.api_view),
     path("api/release-storage/rollback", views.api_view),

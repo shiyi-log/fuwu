@@ -43,6 +43,10 @@
 - 全局凭据文件只接受 `{"version":1,"account":...}` 结构；旧项目级或未知顶层结构会 fail closed，不会被误当作空授权。
 - 本版候选不包含真实生产 PAT、对象存储写入、云端部署或 Heyue 客户端验收；这些证据需要单独记录。
 - 修复远端 Release staging 的长耗时交互：前端默认等待 15 分钟并支持 `VITE_FUWU_STAGE_REMOTE_TIMEOUT_MS`，代理模板等待 20 分钟；仅浏览器 408/504 或无 HTTP 状态的网络中断可沿用原 staging 引用提交 publish，其他业务失败必须重新 staging，项目/频道切换会清理旧上下文，避免重复下载和跨项目提交。
+- 增加 `GET /api/release-storage/latest?project={id}`，服务端按项目登记的 repository 和全局 GitHub 授权选择最新 `draft=false`、`prerelease=false` Release，并校验远端 manifest 与资产清单。
+- 增加 `POST /api/release-storage/stage-remote` 的 `latest: true` 模式；服务端自动发现、下载和校验正式 Release 到受保护 staging，响应只返回脱敏发行摘要，不自动发布或更新 `latest.json`。
+- 发行管理页面增加“自动下载并 staging 最新正式 Release”操作，成功后预填普通 publish 表单；保留按 Tag 获取和手工确认路径。
+- 本次候选的本地验证为后端 `120 passed`、88 项子测试，前端 latest focused Vitest、typecheck、生产构建和编译检查通过；真实 GitHub 授权、远端部署和 Bark 线上 staging 仍单独记录。
 
 ## 0.0.6 远端验收补充
 

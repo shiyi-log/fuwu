@@ -192,6 +192,103 @@ class RemoteStageTests(unittest.TestCase):
             with self.assertRaisesRegex(ReleaseError, "remote release metadata is unavailable"):
                 self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-encoding")
 
+    def test_discover_latest_filters_draft_and_prerelease_and_reads_manifest(self) -> None:
+        formal = {
+            "id": 1001,
+            "tag_name": "v0.0.1",
+            "draft": False,
+            "prerelease": False,
+            "published_at": "2026-10-24T00:00:00Z",
+            "assets": [
+                {"id": 11, "name": "manifest.json", "size": 300},
+                {"id": 12, "name": "package.tar.gz", "size": len(self.body)},
+                {"id": 13, "name": "SHA256SUMS", "size": 75},
+            ],
+        }
+        releases = [
+            {"id": 1002, "tag_name": "v0.0.2-rc1", "draft": False, "prerelease": True, "assets": []},
+            {"id": 1003, "tag_name": "v0.0.3", "draft": True, "prerelease": False, "assets": []},
+            formal,
+        ]
+
+        class LatestOpener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, request, timeout=0):
+                self.requests.append((request, timeout))
+                if "/releases?per_page=100" in request.full_url:
+                    return _Response(json.dumps(releases).encode())
+                if request.full_url.endswith("/assets/11"):
+                    return _Response(json.dumps(self_manifest).encode())
+                raise AssertionError(f"unexpected URL: {request.full_url}")
+
+        self_manifest = self.manifest
+        opener = LatestOpener()
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            discovered = self.service.discover_latest_github_release("owner/repository", github_token="ghs-test-token")
+        self.assertEqual(discovered["tag"], "v0.0.1")
+        self.assertEqual(discovered["version"], "0.0.1")
+        self.assertEqual(discovered["githubReleaseId"], 1001)
+        self.assertEqual(discovered["assetNames"], ["package.tar.gz"])
+        self.assertEqual(discovered["manifest"]["verificationSource"], "heyue-release-storage")
+        self.assertNotIn("_release", discovered)
+        self.assertNotIn("_assetMap", discovered)
+
+    def test_stage_latest_discovers_and_stages_formal_release(self) -> None:
+        sums = f"{self.digest}  package.tar.gz\n".encode()
+        manifest_body = json.dumps(self.manifest).encode()
+        package_body = self.body
+        release = {
+            "id": 1001,
+            "tag_name": "v0.0.1",
+            "draft": False,
+            "prerelease": False,
+            "assets": [
+                {"id": 11, "name": "manifest.json", "size": len(manifest_body)},
+                {"id": 12, "name": "package.tar.gz", "size": len(self.body)},
+                {"id": 13, "name": "SHA256SUMS", "size": len(sums)},
+            ],
+        }
+
+        class LatestStageOpener:
+            def __init__(self):
+                self.requests = []
+
+            def open(self, request, timeout=0):
+                self.requests.append((request, timeout))
+                if "/releases?per_page=100" in request.full_url:
+                    return _Response(json.dumps([release]).encode())
+                if request.full_url.endswith("/assets/11"):
+                    return _Response(manifest_body)
+                if request.full_url.endswith("/assets/12"):
+                    return _Response(package_body)
+                if request.full_url.endswith("/assets/13"):
+                    return _Response(sums)
+                raise AssertionError(f"unexpected URL: {request.full_url}")
+
+        opener = LatestStageOpener()
+        request = {"repository": "owner/repository", "staging_ref": "latest-job", "latest": True}
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            status, staged = self.service.stage_remote_release(request, actor="admin", request_id="stage-latest", github_token="ghs-test-token")
+        self.assertEqual(status, 201)
+        self.assertEqual(staged["staging_ref"], "latest-job")
+        self.assertEqual(staged["release"]["tag"], "v0.0.1")
+        job = Path(self.directory.name) / "staging" / "latest-job"
+        self.assertEqual((job / "package.tar.gz").read_bytes(), self.body)
+        self.assertEqual(json.loads((job / "manifest.json").read_text())["tag"], "v0.0.1")
+        self.assertTrue(all(request.get_header("Authorization") == "Bearer ghs-test-token" for request, _ in opener.requests))
+
+    def test_discover_latest_rejects_when_only_prerelease_exists(self) -> None:
+        class OnlyPrereleaseOpener:
+            def open(self, request, timeout=0):
+                return _Response(json.dumps([{"tag_name": "v0.0.2-rc1", "draft": False, "prerelease": True, "assets": []}]).encode())
+
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=OnlyPrereleaseOpener()):
+            with self.assertRaisesRegex(ReleaseError, "no published GitHub release") as error:
+                self.service.discover_latest_github_release("owner/repository")
+        self.assertEqual(error.exception.code, "remote_release_not_found")
+
 
 if __name__ == "__main__":
     unittest.main()

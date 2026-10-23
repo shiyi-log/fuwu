@@ -1279,6 +1279,122 @@ class ReleaseService:
             return self._stage_remote_release(request, actor=actor, request_id=request_id,
                                               github_token=github_token, project_id=project_id)
 
+    def discover_latest_github_release(self, repository: str, *, github_token: str | None = None) -> dict[str, Any]:
+        """Return the latest published GitHub release and its validated manifest.
+
+        GitHub's release listing is ordered newest-first.  We deliberately
+        filter draft and prerelease records before selecting the first item,
+        then fetch and validate ``manifest.json`` through the same authenticated
+        asset path used by remote staging.  The response contains only release
+        metadata and asset names; no GitHub URLs or credentials are returned.
+        """
+        result = self._discover_latest_github_release(repository, github_token=github_token)
+        return {key: value for key, value in result.items() if not key.startswith("_")}
+
+    def _discover_latest_github_release(self, repository: str, *, github_token: str | None = None) -> dict[str, Any]:
+        if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):
+            raise ReleaseError("invalid_repository", "repository is invalid", 422)
+        if github_token is not None and (not isinstance(github_token, str) or not github_token.strip() or len(github_token) > 512):
+            raise ReleaseError("invalid_github_authorization", "GitHub authorization is invalid", 422)
+        repository = repository.strip()
+        headers = {"Accept": "application/vnd.github+json", "User-Agent": "fuwu-release-storage", "X-GitHub-Api-Version": "2022-11-28"}
+        if github_token:
+            headers["Authorization"] = "Bearer " + github_token.strip()
+        opener = urllib.request.build_opener(_GitHubRedirectHandler())
+        list_url = _github_url(f"https://api.github.com/repos/{repository}/releases?per_page=100", api=True)
+        try:
+            with opener.open(urllib.request.Request(list_url, headers=headers), timeout=30) as response:
+                releases = json.loads(_read_limited(response, 8_000_000))
+        except (OSError, urllib.error.URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ReleaseError("remote_release_unavailable", "remote release metadata is unavailable", 502) from None
+        if not isinstance(releases, list):
+            raise ReleaseError("remote_release_invalid", "remote release metadata is invalid", 422)
+        # GitHub documents this collection as newest-first.  Keep the first
+        # formal record so a prerelease or draft at the head cannot mask the
+        # most recent publishable release.
+        release = next(
+            (
+                item
+                for item in releases
+                if isinstance(item, Mapping)
+                and item.get("draft") is False
+                and item.get("prerelease") is False
+                and isinstance(item.get("tag_name"), str)
+            ),
+            None,
+        )
+        if release is None:
+            raise ReleaseError("remote_release_not_found", "no published GitHub release was found", 404)
+        tag = release["tag_name"]
+        remote_assets = release.get("assets")
+        if not isinstance(remote_assets, list):
+            raise ReleaseError("remote_release_invalid", "remote release assets are invalid", 422)
+        by_name: dict[str, Mapping[str, Any]] = {}
+        for item in remote_assets:
+            if isinstance(item, Mapping) and isinstance(item.get("name"), str):
+                by_name[item["name"]] = item
+        manifest_asset = by_name.get("manifest.json")
+        if manifest_asset is None:
+            raise ReleaseError("remote_manifest_missing", "remote release manifest is missing", 422)
+        manifest_url = _github_asset_url(repository, manifest_asset)
+        manifest_headers = {**headers, "Accept": "application/octet-stream"}
+        try:
+            with opener.open(urllib.request.Request(manifest_url, headers=manifest_headers), timeout=30) as response:
+                manifest = json.loads(_read_limited(response, 2_000_000))
+        except ReleaseError:
+            raise
+        except (OSError, urllib.error.URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError):
+            raise ReleaseError("remote_manifest_unavailable", "remote release manifest is unavailable", 502) from None
+        try:
+            manifest, entries = validate_manifest(manifest, {"tag": tag})
+        except ReleaseError:
+            raise
+        manifest_repository = _project_value(normalize_repository, manifest.get("repository"))
+        if manifest_repository != repository.lower():
+            raise ReleaseError("manifest_mismatch", "manifest repository does not match release repository", 422)
+        asset_names = [entry["path"] for entry in entries]
+        if len(asset_names) != len(set(asset_names)) or any(name not in by_name for name in asset_names):
+            raise ReleaseError("remote_asset_missing", "remote release asset is missing", 422)
+        checksum_asset = by_name.get("SHA256SUMS")
+        if checksum_asset is None:
+            raise ReleaseError("remote_checksums_missing", "remote release SHA256SUMS is missing", 422)
+        # Validate URLs before returning metadata so callers can safely use the
+        # response to start staging without discovering malformed asset records.
+        for name in [*asset_names, "SHA256SUMS"]:
+            _github_asset_url(repository, by_name[name])
+        safe_assets = []
+        for name in asset_names:
+            item = by_name[name]
+            size = item.get("size")
+            safe_assets.append({"name": name, "size": size if isinstance(size, int) and size >= 0 else None})
+        public_manifest = {
+            key: manifest[key]
+            for key in (
+                "schemaVersion", "project", "repository", "version", "tag", "revision", "releaseId",
+                "publishedAt", "draft", "prerelease", "assets", "checksums", "verifiedAt", "verificationSource",
+            )
+            if key in manifest
+        }
+        release_id = release.get("id")
+        safe_release_id = release_id if isinstance(release_id, int) and not isinstance(release_id, bool) and release_id > 0 else None
+        return {
+            "repository": repository.lower(),
+            "tag": tag,
+            "version": manifest["version"],
+            "revision": manifest["revision"],
+            "releaseId": manifest["releaseId"],
+            "githubReleaseId": safe_release_id,
+            "publishedAt": release.get("published_at") if isinstance(release.get("published_at"), str) else None,
+            "draft": False,
+            "prerelease": False,
+            "assets": safe_assets,
+            "assetNames": asset_names,
+            "manifest": public_manifest,
+            "_manifest": manifest,
+            "_release": release,
+            "_assetMap": by_name,
+        }
+
     def _stage_remote_release(
         self,
         request: Mapping[str, Any],
@@ -1288,14 +1404,27 @@ class ReleaseService:
         github_token: str | None = None,
         project_id: str | None = None,
     ) -> tuple[int, dict[str, Any]]:
-        allowed = {"repository", "tag", "staging_ref", "assets", "manifest"}
+        allowed = {"repository", "tag", "staging_ref", "assets", "manifest", "latest"}
         if not isinstance(request, Mapping) or set(request) - allowed or not isinstance(request.get("repository"), str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", request["repository"]):
+            raise ReleaseError("invalid_remote_stage_request", "remote staging request is invalid", 422)
+        latest = request.get("latest", False)
+        if not isinstance(latest, bool):
             raise ReleaseError("invalid_remote_stage_request", "remote staging request is invalid", 422)
         tag = request.get("tag")
         job_ref = request.get("staging_ref")
         assets = request.get("assets")
         manifest = request.get("manifest")
-        if not isinstance(tag, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag) or not isinstance(job_ref, str) or not JOB_RE.fullmatch(job_ref):
+        if not isinstance(job_ref, str) or not JOB_RE.fullmatch(job_ref):
+            raise ReleaseError("invalid_remote_stage_request", "remote staging request is invalid", 422)
+        discovery = None
+        if latest:
+            if any(key in request for key in ("tag", "assets", "manifest")):
+                raise ReleaseError("invalid_remote_stage_request", "latest staging cannot include release details", 422)
+            discovery = self._discover_latest_github_release(request["repository"], github_token=github_token)
+            tag = discovery["tag"]
+            assets = discovery["assetNames"]
+            manifest = discovery["_manifest"]
+        elif not isinstance(tag, str) or not re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+", tag):
             raise ReleaseError("invalid_remote_stage_request", "remote staging request is invalid", 422)
         if not isinstance(assets, list) or not assets or len(assets) != len(set(assets)) or any(not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,254}", name) for name in assets):
             raise ReleaseError("invalid_remote_stage_request", "remote asset list is invalid", 422)
@@ -1316,26 +1445,34 @@ class ReleaseService:
         job_dir = protected_job_path(self.staging_dir, job_ref)
         if job_dir.exists():
             raise ReleaseError("staging_conflict", "staging job already exists", 409)
-        api = _github_url(f"https://api.github.com/repos/{request['repository']}/releases/tags/{tag}", api=True)
         opener = urllib.request.build_opener(_GitHubRedirectHandler())
         headers = {"Accept": "application/vnd.github+json", "User-Agent": "fuwu-release-storage"}
-        if github_token:
-            headers["Authorization"] = "Bearer " + github_token.strip()
-        req = urllib.request.Request(api, headers=headers)
-        try:
-            with opener.open(req, timeout=30) as response:
-                release = json.loads(_read_limited(response, 2_000_000))
-        except (OSError, urllib.error.URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError):
-            raise ReleaseError("remote_release_unavailable", "remote release metadata is unavailable", 502) from None
+        release = discovery.get("_release") if discovery else None
+        by_name: dict[str, Mapping[str, Any]] | None = discovery.get("_assetMap") if discovery else None
+        if not latest:
+            api = _github_url(f"https://api.github.com/repos/{request['repository']}/releases/tags/{tag}", api=True)
+            req = urllib.request.Request(api, headers=headers)
+            if github_token:
+                headers["Authorization"] = "Bearer " + github_token.strip()
+                req = urllib.request.Request(api, headers=headers)
+            try:
+                with opener.open(req, timeout=30) as response:
+                    release = json.loads(_read_limited(response, 2_000_000))
+            except (OSError, urllib.error.URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError):
+                raise ReleaseError("remote_release_unavailable", "remote release metadata is unavailable", 502) from None
+        else:
+            if github_token:
+                headers["Authorization"] = "Bearer " + github_token.strip()
         if not isinstance(release, Mapping) or release.get("tag_name") != tag or release.get("draft") or release.get("prerelease"):
             raise ReleaseError("remote_release_invalid", "remote release is not publishable", 422)
-        remote_assets = release.get("assets")
-        if not isinstance(remote_assets, list):
-            raise ReleaseError("remote_release_invalid", "remote release assets are invalid", 422)
-        by_name: dict[str, Mapping[str, Any]] = {}
-        for item in remote_assets:
-            if isinstance(item, Mapping) and isinstance(item.get("name"), str):
-                by_name[item["name"]] = item
+        if by_name is None:
+            remote_assets = release.get("assets")
+            if not isinstance(remote_assets, list):
+                raise ReleaseError("remote_release_invalid", "remote release assets are invalid", 422)
+            by_name = {}
+            for item in remote_assets:
+                if isinstance(item, Mapping) and isinstance(item.get("name"), str):
+                    by_name[item["name"]] = item
         for name in assets:
             if name not in by_name:
                 raise ReleaseError("remote_asset_missing", "remote release asset is missing", 422)
@@ -1398,7 +1535,19 @@ class ReleaseService:
             shutil.rmtree(job_dir, ignore_errors=True)
             raise ReleaseError("remote_asset_unavailable", "remote release asset is unavailable", 502) from None
         self.repository.audit_event("remote_stage", project_id=project_id, version=None, channel=None, actor=actor, request_id=request_id, details={"repository": request["repository"], "tag": tag, "staging_ref": job_ref, "assets": assets})
-        return 201, {"status": "staged", "job": {"id": request_id, "status": "staged", "progress": 100}, "staging_ref": job_ref}
+        release_summary = {
+            "repository": request["repository"].lower(),
+            "tag": tag,
+            "version": manifest["version"],
+            "revision": manifest["revision"],
+            "releaseId": manifest["releaseId"],
+            "draft": False,
+            "prerelease": False,
+            "assets": assets,
+        }
+        if discovery:
+            release_summary.update({key: value for key, value in discovery.items() if key in {"githubReleaseId", "publishedAt"}})
+        return 201, {"status": "staged", "job": {"id": request_id, "status": "staged", "progress": 100}, "staging_ref": job_ref, "release": release_summary}
 
     def _publish(self, request: Mapping[str, Any], *, actor: str, request_id: str) -> tuple[int, dict[str, Any]]:
         allowed = {"project", "channel", "version", "tag", "revision", "staging_ref", "job_ref", "requestId"}

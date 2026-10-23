@@ -56,6 +56,7 @@
 | `GET` | `/api/downloads/{project}/{channel}/latest.json` | 公开；仅已发布 stable 指针 | 200；未发布或校验失败为 404/502 |
 | `GET` | `/api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 200；对象不存在为 404 |
 | `GET` | `/api/release-storage/status` | `release.storage.read` 和项目范围 | 200 |
+| `GET` | `/api/release-storage/latest?project={id}` | `release.storage.publish` 和项目范围；按项目绑定仓库读取 GitHub | 200；没有正式 Release 为 404 |
 | `POST` | `/api/release-storage/publish` | `release.storage.publish` 和项目范围 | 201；幂等重放为 200 |
 | `POST` | `/api/release-storage/stage-remote` | `release.storage.publish` | 201；按项目授权下载 GitHub Release 资产到受保护 staging job |
 | `POST` | `/api/release-storage/rollback` | `release.storage.rollback`、项目范围和超级管理员 | 200 |
@@ -112,7 +113,11 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 
 ### 远端 Release staging
 
-`POST /api/release-storage/stage-remote` 支持通过全局 GitHub 授权读取私有或公开 Release；未提供 `project` 时使用匿名公开访问。提供 `project` 时，服务端使用系统设置中的全局令牌，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。下载优先使用 GitHub Release asset 的 API 地址 `/repos/{owner}/{repo}/releases/assets/{id}`，并以 `Accept: application/octet-stream` 请求；没有 asset `id` 的兼容元数据才使用经过主机校验的 `browser_download_url`。跨主机重定向只允许 GitHub API 或 GitHub 下载域名，并会移除跨主机转发的授权头。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
+`GET /api/release-storage/latest?project={id}` 使用项目登记的 GitHub 仓库和系统设置中的全局授权，查询 Release 列表并选择最新的 `draft=false`、`prerelease=false` 版本。服务端读取并校验该 Release 的 `manifest.json`、仓库绑定、版本和标签后，返回 `repository`、`tag`、`version`、`revision`、`releaseId`、`githubReleaseId`、`publishedAt`、资产名和受限的 v1 manifest 字段。响应不包含下载 URL、授权令牌或上游未定义字段；没有正式 Release 时返回 `remote_release_not_found`。该接口只发现和校验元数据，不创建 staging。
+
+`POST /api/release-storage/stage-remote` 支持通过全局 GitHub 授权读取私有或公开 Release；未提供 `project` 时使用匿名公开访问。提供 `project` 时，服务端使用系统设置中的全局令牌，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。下载优先使用 GitHub Release asset 的 API 地址 `/repos/{owner}/{repo}/releases/assets/{id}`，并以 `Accept: application/octet-stream` 请求；没有 asset `id` 的兼容元数据才使用经过主机校验的 `browser_download_url`。跨主机重定向只允许 GitHub API 或 GitHub 下载域名，并会移除跨主机转发的授权头。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。普通 staging 响应只包含 job/status 和 staging 引用；该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
+
+将 `latest=true` 与 `project`、`staging_ref` 一起提交时，服务端会在同一个 staging 请求中自动执行上述发现、读取 manifest、下载资产和校验步骤，无需客户端提交 `tag`、`assets` 或 `manifest`。成功响应额外包含脱敏的 `release` 摘要；staging 仍须显式提交普通 publish 任务。
 
 ```json
 {
