@@ -53,6 +53,7 @@
 | `GET`、`POST`、`DELETE` | `/api/settings/github-authorization` | `settings.manage`；写入需安全连接 | 200 |
 | `POST` | `/api/settings/github-authorization/check` | `settings.manage`；需安全连接 | 200 |
 | `GET` | `/api/releases` | `release.storage.read` 和项目范围 | 200 |
+| `GET` | `/api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 200；对象不存在为 404 |
 | `GET` | `/api/release-storage/status` | `release.storage.read` 和项目范围 | 200 |
 | `POST` | `/api/release-storage/publish` | `release.storage.publish` 和项目范围 | 201；幂等重放为 200 |
 | `POST` | `/api/release-storage/stage-remote` | `release.storage.publish` | 201；按项目授权下载 GitHub Release 资产到受保护 staging job |
@@ -101,6 +102,8 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 `GET /api/release-storage/status` 支持相同查询参数，返回 provider、前缀、项目和发行计数、对象存储连通性以及最近 validation、publish、rollback 任务摘要。任务进度代表处理阶段，不代表按上传字节计算的实时百分比。
 
 `GET /api/release-storage/audit` 支持 `project` 与 `channel` 查询参数，最多返回最近 100 条发行和指针事件。记录包含事件类型、项目、版本、渠道、操作者、request ID、时间和经筛选的详情。
+
+`GET /api/downloads/{project}/{version}/{filename}` 是面向安装器和升级器的匿名 HTTPS 下载入口。服务端只解析数据库中已经发布的 `stable` 发行及其 `manifest.json`、`SHA256SUMS` 和资产名称，再使用服务端受保护的对象存储凭据流式读取；请求不能指定任意对象键，也不会返回存储凭据。响应包含 `Content-Length`、`Content-Disposition`、长期不可变缓存和 `X-Fuwu-SHA256`，客户端仍应按 `SHA256SUMS` 或 manifest 再次校验。该入口用于对象存储未开放匿名策略的部署，下载者不需要 GitHub 或 AWS 授权。
 
 ## 发布
 

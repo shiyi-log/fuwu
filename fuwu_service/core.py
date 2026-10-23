@@ -462,6 +462,16 @@ class S3ObjectStore:
         _, _, body = self._request("GET", key, public=public)
         return body
 
+    def open_object(self, key: str):
+        """Open a signed streaming response for an internal download proxy."""
+        request = self._signed_request("GET", key)
+        try:
+            return _open_s3_url(request, timeout=self.timeout)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                raise ReleaseError("object_not_found", "storage object was not found", 404) from None
+            raise ReleaseError("unauthorized", "authentication required", 401) from None
+
     def head_public(self, key: str) -> dict[str, Any]:
         return self.head_object(key, public=True)
 
@@ -895,6 +905,36 @@ class ReleaseService:
             project = self.repository.create_project(request)
             self.repository.audit_event("project_created", project_id=project["id"], version=None, channel=None, actor=actor, request_id=request_id, details={"status": "created", "repository": project["repository"]})
             return 201, project
+
+    def public_download(self, project: str, version: str, name: str) -> dict[str, Any]:
+        """Resolve a published stable asset for the anonymous Fuwu route."""
+        project = _project_value(validate_project_id, project)
+        version = validate_version(version)
+        name = safe_relative_path(name)
+        if "/" in name:
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        release = self.repository.get_release(project, version, "stable")
+        if not release or release.get("status") != "published":
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        if name == "manifest.json":
+            body = json_bytes(release["manifest"])
+            return {"name": name, "key": release["manifest_key"], "size": len(body), "sha256": safe_digest(body), "body": body}
+        artifacts = {item["name"]: item for item in self.repository.list_artifacts(release["id"])}
+        artifact = artifacts.get(name)
+        if not artifact:
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        return {"name": name, "key": artifact["object_key"], "size": artifact["size"], "sha256": artifact["sha256"]}
+
+    def open_public_download(self, descriptor: Mapping[str, Any]):
+        """Open a published asset for streaming without exposing storage credentials."""
+        body = descriptor.get("body")
+        if isinstance(body, bytes):
+            from io import BytesIO
+            return BytesIO(body)
+        if isinstance(self.store, S3ObjectStore):
+            return self.store.open_object(str(descriptor["key"]))
+        from io import BytesIO
+        return BytesIO(self.store.get_object(str(descriptor["key"])))
 
     def update_project(self, project_id: str, request: Mapping[str, Any], *, actor: str, request_id: str) -> tuple[int, dict[str, Any]]:
         """Change display metadata/active only; repository binding is immutable."""

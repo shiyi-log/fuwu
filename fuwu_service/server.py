@@ -4,13 +4,14 @@ from __future__ import annotations
 import json
 import ipaddress
 import logging
+import mimetypes
 import os
 import re
 import ssl
 import sys
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, unquote, urlsplit
 
 from .administration import administration_store
 from .api import handle_api, requires_generated_request_id
@@ -89,6 +90,32 @@ class ApiHandler(BaseHTTPRequestHandler):
             raise ReleaseError("invalid_json", "request body is invalid", 400)
         return value
 
+    def _public_download(self, target: str) -> None:
+        parts = [unquote(part) for part in target.split("/")]
+        # /api/downloads/{project}/{version}/{filename}; filenames are rooted
+        # release assets and are resolved against a published DB record.
+        if len(parts) != 6 or parts[:3] != ["", "api", "downloads"] or any(not part for part in parts[3:]):
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        descriptor = self.service.public_download(parts[3], parts[4], parts[5])
+        response = self.service.open_public_download(descriptor)
+        try:
+            self.send_response(200)
+            self.send_header("Content-Type", mimetypes.guess_type(descriptor["name"])[0] or "application/octet-stream")
+            self.send_header("Content-Length", str(descriptor["size"]))
+            self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + descriptor["name"])
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.send_header("X-Fuwu-SHA256", descriptor["sha256"])
+            self.end_headers()
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                self.wfile.write(chunk)
+        finally:
+            close = getattr(response, "close", None)
+            if callable(close):
+                close()
+
     def _request_is_secure(self) -> bool:
         try:
             if ipaddress.ip_address(self.client_address[0]).is_loopback:
@@ -102,6 +129,9 @@ class ApiHandler(BaseHTTPRequestHandler):
         request_id = request_identifier(header_request_id)
         try:
             parsed = urlsplit(self.path)
+            if self.command == "GET" and parsed.path.startswith("/api/downloads/"):
+                self._public_download(parsed.path)
+                return
             # Generate before reading a sensitive body.  Keep URL parsing in
             # this guarded block so malformed request targets still receive a
             # structured error instead of terminating the handler thread.
