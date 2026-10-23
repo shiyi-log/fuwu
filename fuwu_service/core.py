@@ -508,11 +508,35 @@ def _github_url(value: Any, *, api: bool = False) -> str:
 
 class _GitHubRedirectHandler(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
-        _github_url(newurl)
+        # Release asset API requests may redirect within api.github.com before
+        # GitHub sends the response to release-assets.githubusercontent.com.
+        # Validate both GitHub API and download hosts, and drop the bearer
+        # token whenever the redirect crosses hosts.
+        try:
+            new_host = urllib.parse.urlsplit(newurl).hostname
+        except ValueError:
+            new_host = None
+        _github_url(newurl, api=new_host == "api.github.com")
         redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
         if redirected is not None and urllib.parse.urlsplit(req.full_url).netloc != urllib.parse.urlsplit(newurl).netloc:
             redirected.remove_header("Authorization")
         return redirected
+
+
+def _github_asset_url(repository: str, asset: Mapping[str, Any]) -> str:
+    """Return the safest URL for a GitHub release asset download.
+
+    GitHub's release metadata includes a numeric asset id and a browser URL.
+    The API URL is preferred because it supports authenticated private-release
+    downloads with ``Accept: application/octet-stream``. Older or synthetic
+    metadata without an id continues to use the validated browser URL.
+    """
+    asset_id = asset.get("id")
+    if asset_id is not None:
+        if isinstance(asset_id, bool) or not isinstance(asset_id, int) or asset_id <= 0:
+            raise ReleaseError("remote_asset_invalid", "remote release asset URL is invalid", 422)
+        return _github_url(f"https://api.github.com/repos/{repository}/releases/assets/{asset_id}", api=True)
+    return _github_url(asset.get("browser_download_url"))
 
 
 def _read_limited(response: Any, maximum: int) -> bytes:
@@ -1172,19 +1196,19 @@ class ReleaseService:
         remote_assets = release.get("assets")
         if not isinstance(remote_assets, list):
             raise ReleaseError("remote_release_invalid", "remote release assets are invalid", 422)
-        by_name: dict[str, Any] = {}
+        by_name: dict[str, Mapping[str, Any]] = {}
         for item in remote_assets:
             if isinstance(item, Mapping) and isinstance(item.get("name"), str):
-                by_name[item["name"]] = item.get("browser_download_url")
+                by_name[item["name"]] = item
         for name in assets:
             if name not in by_name:
                 raise ReleaseError("remote_asset_missing", "remote release asset is missing", 422)
-            _github_url(by_name[name])
+            _github_asset_url(request["repository"], by_name[name])
         checksum_name = "SHA256SUMS"
-        if checksum_name not in by_name or not isinstance(by_name[checksum_name], str):
+        if checksum_name not in by_name:
             raise ReleaseError("remote_checksums_missing", "remote release SHA256SUMS is missing", 422)
-        _github_url(by_name[checksum_name])
-        if any(name not in by_name or not isinstance(by_name[name], str) for name in assets):
+        _github_asset_url(request["repository"], by_name[checksum_name])
+        if any(name not in by_name for name in assets):
             raise ReleaseError("remote_asset_missing", "remote release asset is missing", 422)
         job_dir.mkdir(mode=0o700)
         try:
@@ -1193,11 +1217,11 @@ class ReleaseService:
                 download_headers["Authorization"] = "Bearer " + github_token.strip()
             for name in assets:
                 target = job_dir / name
-                download = urllib.request.Request(by_name[name], headers=download_headers)
+                download = urllib.request.Request(_github_asset_url(request["repository"], by_name[name]), headers=download_headers)
                 with opener.open(download, timeout=120) as response:
                     target.write_bytes(_read_limited(response, 1_500_000_000))
                 target.chmod(0o600)
-            checksum_req = urllib.request.Request(by_name[checksum_name], headers=download_headers)
+            checksum_req = urllib.request.Request(_github_asset_url(request["repository"], by_name[checksum_name]), headers=download_headers)
             with opener.open(checksum_req, timeout=30) as response:
                 try:
                     upstream_sums = _read_limited(response, 2_000_000).decode("utf-8")

@@ -35,7 +35,7 @@ class _Opener:
 
     def open(self, request, timeout=0):
         self.requests.append((request, timeout))
-        if request.full_url.startswith("https://api.github.com/"):
+        if "/releases/tags/" in request.full_url:
             return _Response(json.dumps(self.release).encode())
         name = request.full_url.rsplit("/", 1)[-1]
         if name == self.fail_asset:
@@ -97,6 +97,48 @@ class RemoteStageTests(unittest.TestCase):
         self.assertEqual(published["status"], "published")
         events = self.service.repository.list_audit()
         self.assertNotIn("ghs-test-token", json.dumps(events))
+
+    def test_stage_prefers_authenticated_asset_api_url_when_id_is_present(self) -> None:
+        release = {
+            **self.release,
+            "assets": [
+                {"id": 123, "name": "package.tar.gz"},
+                {"id": 456, "name": "SHA256SUMS"},
+            ],
+        }
+
+        class ApiAssetOpener(_Opener):
+            def open(self, request, timeout=0):
+                self.requests.append((request, timeout))
+                if "/releases/tags/" in request.full_url:
+                    return _Response(json.dumps(self.release).encode())
+                asset_id = request.full_url.rsplit("/", 1)[-1]
+                if asset_id == "123":
+                    return _Response(self.assets["package.tar.gz"])
+                if asset_id == "456":
+                    return _Response(self.assets["SHA256SUMS"])
+                raise AssertionError(f"unexpected asset URL: {request.full_url}")
+
+        sums = f"{self.digest}  package.tar.gz\n".encode()
+        opener = ApiAssetOpener(release, {"package.tar.gz": self.body, "SHA256SUMS": sums})
+        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+            status, staged = self.service.stage_remote_release(
+                self._request(), actor="admin", request_id="stage-api-asset", github_token="ghs-test-token"
+            )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(staged["staging_ref"], "remote-job")
+        asset_requests = [request for request, _timeout in opener.requests[1:]]
+        self.assertEqual(
+            [request.full_url for request in asset_requests],
+            [
+                "https://api.github.com/repos/owner/repository/releases/assets/123",
+                "https://api.github.com/repos/owner/repository/releases/assets/456",
+            ],
+        )
+        for request in asset_requests:
+            self.assertEqual(request.get_header("Accept"), "application/octet-stream")
+            self.assertEqual(request.get_header("Authorization"), "Bearer ghs-test-token")
 
     def test_request_cannot_supply_github_token(self) -> None:
         with self.assertRaisesRegex(ReleaseError, "remote staging request is invalid") as error:

@@ -106,7 +106,7 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 
 ### 远端 Release staging
 
-`POST /api/release-storage/stage-remote` 支持通过全局 GitHub 授权读取私有或公开 Release；未提供 `project` 时使用匿名公开访问。提供 `project` 时，服务端使用系统设置中的全局令牌，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
+`POST /api/release-storage/stage-remote` 支持通过全局 GitHub 授权读取私有或公开 Release；未提供 `project` 时使用匿名公开访问。提供 `project` 时，服务端使用系统设置中的全局令牌，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。下载优先使用 GitHub Release asset 的 API 地址 `/repos/{owner}/{repo}/releases/assets/{id}`，并以 `Accept: application/octet-stream` 请求；没有 asset `id` 的兼容元数据才使用经过主机校验的 `browser_download_url`。跨主机重定向只允许 GitHub API 或 GitHub 下载域名，并会移除跨主机转发的授权头。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
 
 ```json
 {
