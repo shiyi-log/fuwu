@@ -5,11 +5,13 @@ import http.client
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
@@ -164,6 +166,62 @@ class PublicLatestTests(unittest.TestCase):
             self.assertEqual(python_head["X-Fuwu-SHA256"], python_response["X-Fuwu-SHA256"])
             self.assertEqual(client.post("/api/downloads/heyue/bootstrap.py").status_code, 405)
             self.assertIs(resolve("/api/downloads/heyue/bootstrap.py").func, views.heyue_python_bootstrap_view)
+
+    def test_bootstrap_binds_latest_identity_and_forwards_fixed_interactive_argv(self) -> None:
+        source = (Path(__file__).parents[1] / "fuwu_service" / "heyue_bootstrap.sh").read_text(encoding="utf-8")
+        python_source = source.split("<<'PY'\n", 1)[1].rsplit("\nPY\n", 1)[0]
+        namespace: dict[str, object] = {}
+        exec(compile(python_source, "heyue_bootstrap.sh", "exec"), namespace)
+
+        revision = "a" * 40
+        python_name = "heyue-python-1.0.4.tar.gz"
+        pointer = {
+            "version": "1.0.4", "tag": "v1.0.4", "revision": revision,
+            "releaseId": 104, "publishedAt": "2026-10-23T18:42:54Z",
+            "manifestKey": "releases/heyue/v1.0.4/manifest.json",
+            "manifestSha256": hashlib.sha256(b"").hexdigest(),
+        }
+        manifest = {"version": "1.0.4", "tag": "v1.0.4", "revision": revision,
+                    "releaseId": 104, "publishedAt": "2026-10-23T18:42:54Z"}
+        asset = {"name": python_name, "key": f"releases/heyue/v1.0.4/{python_name}",
+                 "size": 1, "sha256": "b" * 64}
+        checksums = {"key": "releases/heyue/v1.0.4/SHA256SUMS", "sha256": "c" * 64,
+                     "entries": {python_name: asset["sha256"]}}
+        captured: dict[str, object] = {}
+
+        namespace["base_url"] = lambda: "https://fuwu.1213.cc/api/downloads/heyue"
+        namespace["get_json"] = lambda _source: (pointer, b"")
+        namespace["validate_latest"] = lambda _pointer: "1.0.4"
+        namespace["validate_manifest"] = lambda _manifest, *, current: (asset, checksums)
+        namespace["object_url"] = lambda *_args, **_kwargs: "https://fuwu.1213.cc/object"
+        namespace["get_bytes"] = lambda *_args, **_kwargs: b""
+        namespace["parse_checksums"] = lambda *_args, **_kwargs: None
+        namespace["download_asset"] = lambda *_args, **_kwargs: None
+        namespace["extract_archive"] = lambda *_args, **_kwargs: Path("/tmp/fixed-installer.sh")
+
+        def fake_run(command, **_kwargs):
+            captured["command"] = command
+            return SimpleNamespace(returncode=17)
+
+        binding = namespace["validate_pointer_binding"]
+        with patch.object(namespace["subprocess"], "run", side_effect=fake_run), patch.object(
+            sys, "argv", ["heyue_bootstrap.sh", "--mode", "python"]
+        ):
+            result = namespace["main"]()  # type: ignore[operator]
+
+        self.assertEqual(result, 17)
+        command = captured["command"]
+        self.assertIsInstance(command, list)
+        self.assertEqual(command[0:2], ["/bin/bash", "/tmp/fixed-installer.sh"])
+        self.assertIn("--mode", command)
+        self.assertIn("--interactive", command)
+        self.assertEqual(command[command.index("--tag") + 1], "v1.0.4")
+        self.assertEqual(command[command.index("--revision") + 1], revision)
+        self.assertEqual(command[command.index("--release-source") + 1], "object-storage")
+
+        mismatched = dict(manifest, releaseId=105)
+        with self.assertRaises(namespace["BootstrapError"]):  # type: ignore[arg-type]
+            binding(pointer, mismatched, current="1.0.4")  # type: ignore[operator]
 
     def test_anonymous_python_source_chain_uses_latest_manifest_checksums_and_asset(self) -> None:
         client = Client()

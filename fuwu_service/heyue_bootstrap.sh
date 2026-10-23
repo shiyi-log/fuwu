@@ -232,6 +232,15 @@ def validate_manifest(manifest: dict, *, current: str) -> tuple[dict, str]:
     return python_asset, checksums
 
 
+def validate_pointer_binding(pointer: dict, manifest: dict, *, current: str) -> None:
+    """Ensure the immutable manifest is the exact release named by latest."""
+    for field in ("revision", "releaseId", "publishedAt"):
+        if manifest.get(field) != pointer.get(field):
+            fail(f"Fuwu latest {field} does not match the manifest.")
+    if manifest.get("version") != current or manifest.get("tag") != f"v{current}":
+        fail("Fuwu latest release identity does not match the manifest.")
+
+
 def parse_checksums(body: bytes, expected: str, expected_entries: dict[str, str]) -> None:
     if hashlib.sha256(body).hexdigest() != expected:
         fail("Fuwu checksum file digest does not match.")
@@ -356,6 +365,7 @@ def main() -> int:
         if hashlib.sha256(manifest_body).hexdigest() != pointer["manifestSha256"]:
             fail("Fuwu manifest digest does not match latest.")
         python_asset, checksums = validate_manifest(manifest, current=current)
+        validate_pointer_binding(pointer, manifest, current=current)
         sums_url = object_url(base, checksums["key"], expected=f"{PREFIX}/v{current}/SHA256SUMS", version_value=current)
         sums_body = get_bytes(sums_url, limit=MAX_METADATA)
         parse_checksums(sums_body, checksums["sha256"], checksums["entries"])
@@ -368,6 +378,9 @@ def main() -> int:
             installer = extract_archive(archive, extracted, current=current, revision=pointer["revision"])
             command = [
                 "/bin/bash", str(installer), *sys.argv[1:],
+                "--interactive",
+                "--tag", f"v{current}",
+                "--revision", pointer["revision"],
                 "--release-source", "object-storage",
                 "--release-storage-base-url", base,
                 "--release-storage-channel", "stable",
