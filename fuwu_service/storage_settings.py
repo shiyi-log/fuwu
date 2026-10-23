@@ -246,6 +246,8 @@ def read_managed_credentials(path: Path) -> AwsCredentials:
 def masked_access_key(access_key: str | None) -> str | None:
     if not access_key:
         return None
+    if len(access_key) <= 4:
+        return "****"
     return "****" + access_key[-4:]
 
 

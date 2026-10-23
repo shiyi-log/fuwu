@@ -12,6 +12,7 @@ from fuwu_service.core import AwsCredentials, MemoryObjectStore, ReleaseError, R
 from fuwu_service.storage_settings import (
     build_managed_store,
     load_managed_storage,
+    masked_access_key,
     read_managed_credentials,
     update_storage_settings,
     validate_storage_settings,
@@ -93,6 +94,12 @@ class ManagedStorageSettingsTests(unittest.TestCase):
         store_and_prefix = build_managed_store(reopened, credentials_file=self.credentials_file, env={})
         self.assertEqual(store_and_prefix[0].credentials.session_token, self.body["sessionToken"])
         self.assertEqual(store_and_prefix[1], "releases")
+
+    def test_access_key_hint_never_reveals_short_values(self):
+        for value in ("a", "ab", "abc", "abcd"):
+            with self.subTest(length=len(value)):
+                self.assertEqual(masked_access_key(value), "****")
+        self.assertEqual(masked_access_key("abcde"), "****bcde")
 
     def test_credentials_require_secure_transport_and_root_process(self):
         with self.assertRaises(ReleaseError) as insecure:
