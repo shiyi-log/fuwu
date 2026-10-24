@@ -202,10 +202,10 @@ Heyue 的匿名安装契约不依赖独立的 `install.tar.gz` 或 GitHub 下载
 | 400 | `confirmation_required`、`secure_transport_required`、`superadmin_password_required` | 缺少二次确认、连接不安全或配置初始化密码未提供 |
 | 401 | `unauthorized` | 会话无效、过期或认证失败 |
 | 403 | `forbidden` | 权限或项目范围不足 |
-| 404 | `not_found`、`project_not_found`、`release_not_found` | 目标不存在 |
+| 404 | `not_found`、`project_not_found`、`release_not_found`、`github_documentation_not_found` | 目标或绑定仓库 README 不存在 |
 | 409 | `release_conflict`、`immutable_object_conflict`、`idempotency_conflict`、`project_repository_mismatch` | 发行、对象、幂等或项目仓库绑定冲突 |
 | 422 | `invalid_query`、`invalid_manifest`、`invalid_publish_request`、`invalid_storage_settings`、`invalid_github_token`、`github_token_invalid`、`github_repository_access_denied`、`remote_checksum_mismatch` | 请求、授权或发行数据无效 |
-| 502 | `storage_verification_failed`、`remote_release_unavailable`、`github_unavailable` | 对象校验未通过或 GitHub 服务不可用 |
+| 502 | `storage_verification_failed`、`remote_release_unavailable`、`github_unavailable`、`github_documentation_unavailable`、`github_documentation_too_large` | 对象校验未通过、GitHub 服务不可用或 README 超过读取上限 |
 | 503 | `pointer_reconciliation_required`、`credential_storage_unavailable` | 指针需人工核对或凭据安全存储不可用 |
 
 其他领域错误仍使用固定错误码和安全消息，不包含存储凭据、私有路径或未知输入值。

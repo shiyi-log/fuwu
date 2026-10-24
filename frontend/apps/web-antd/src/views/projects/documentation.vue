@@ -54,7 +54,7 @@ watch(id, load, { immediate: true });
             <a v-if="documentation.sourceUrl" :href="documentation.sourceUrl" target="_blank" rel="noopener noreferrer">在 GitHub 查看</a>
           </template>
           <div class="mb-3 text-sm text-gray-500">
-            {{ documentation.repository }} / {{ documentation.path }}
+            {{ documentation.repository }} / {{ documentation.path }} · README commit {{ documentation.sha || '未知' }}
           </div>
           <pre class="m-0 max-h-[70vh] overflow-auto whitespace-pre-wrap break-words font-mono">{{ documentation.content || '原项目暂未提供 README 说明。' }}</pre>
         </Card>
