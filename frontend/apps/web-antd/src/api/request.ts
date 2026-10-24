@@ -94,7 +94,11 @@ function createRequestClient(baseURL: string, options?: RequestClientOptions) {
         // Authentication handling already redirects or refreshes the session.
         return;
       }
-      if (status === 409 && error?.response?.data?.code === 'release_conflict') {
+      if (
+        status === 409 &&
+        (error?.response?.data?.code === 'release_conflict' ||
+          error?.response?.data?.code === 'immutable_object_conflict')
+      ) {
         message.error('该版本已存在且摘要不同，不能覆盖 immutable Release。请使用新的版本号。');
         return;
       }

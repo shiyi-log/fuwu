@@ -5,7 +5,10 @@ const SAFE_REQUEST_CODES = new Set([
   'ERR_NETWORK',
   'ETIMEDOUT',
 ]);
-const SAFE_SERVER_CODES = new Set(['release_conflict']);
+const SAFE_SERVER_CODES = new Set([
+  'immutable_object_conflict',
+  'release_conflict',
+]);
 
 export type SafeRequestError = Error & {
   code?: string;
@@ -54,7 +57,10 @@ export function sanitizeRequestError(error: unknown): SafeRequestError {
 
 export function isReleaseConflictError(error: unknown): boolean {
   const candidate = error as { serverCode?: unknown } | null;
-  return candidate?.serverCode === 'release_conflict';
+  return (
+    candidate?.serverCode === 'release_conflict' ||
+    candidate?.serverCode === 'immutable_object_conflict'
+  );
 }
 
 export function rejectWithSanitizedRequestError(

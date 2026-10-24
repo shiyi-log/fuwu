@@ -1,0 +1,1 @@
+import{cr as e}from"../jse/index-index-x710Et1C.js";function t(t){let n=e(typeof t==`function`?t():t);function r(e){n.value=e}return[n,r]}export{t};

@@ -1,0 +1,1 @@
+import{Ln as e,Sn as t,Xn as n,or as r}from"../jse/index-index-x710Et1C.js";import{It as i}from"./useConfigInject-C7kv2Gp7.js";function a(a){let o=Symbol(`contextKey`);return{useProvide:(t,a)=>{let s=r({});return e(o,s),n(()=>{i(s,t,a||{})}),s},useInject:()=>t(o,a)||{}}}export{a as t};

@@ -56,6 +56,19 @@ describe('sanitizeRequestError', () => {
     expect(error).not.toHaveProperty('response');
   });
 
+  it('preserves the allowlisted immutable object conflict code', () => {
+    const error = sanitizeRequestError({
+      response: {
+        status: 409,
+        data: { code: 'immutable_object_conflict' },
+      },
+    });
+
+    expect(error.status).toBe(409);
+    expect(error.serverCode).toBe('immutable_object_conflict');
+    expect(error).not.toHaveProperty('response');
+  });
+
   it('drops unknown codes and invalid statuses', () => {
     const error = sanitizeRequestError({
       code: 'CUSTOM_SECRET_CODE',
@@ -71,6 +84,7 @@ describe('sanitizeRequestError', () => {
 describe('isReleaseConflictError', () => {
   it('recognizes only the sanitized allowlisted code', () => {
     expect(isReleaseConflictError({ serverCode: 'release_conflict' })).toBe(true);
+    expect(isReleaseConflictError({ serverCode: 'immutable_object_conflict' })).toBe(true);
     expect(isReleaseConflictError({ serverCode: 'project_conflict' })).toBe(false);
     expect(isReleaseConflictError({ status: 409 })).toBe(false);
   });
