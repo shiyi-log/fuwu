@@ -9,7 +9,10 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-exec python3 - "$@" <<'PY'
+bootstrap_python="$(mktemp "${TMPDIR:-/tmp}/heyue-bootstrap.XXXXXX.py")"
+trap 'rm -f -- "$bootstrap_python"' EXIT
+
+cat >"$bootstrap_python" <<'PY'
 from __future__ import annotations
 
 import hashlib
@@ -396,3 +399,5 @@ def main() -> int:
 if __name__ == "__main__":
     raise SystemExit(main())
 PY
+
+python3 "$bootstrap_python" "$@"

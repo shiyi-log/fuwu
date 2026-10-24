@@ -10,14 +10,14 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 源码版本 | `0.0.7` Bootstrap 修复候选；`v0.0.6` 已发布且不改写 |
+| 源码版本 | `0.0.8` Bootstrap TTY 修复候选；`v0.0.7` 已发布且不改写 |
 | 版本格式 | 三段数字，每段一位；`0.0.9` 后进位为 `0.1.0` |
 | 后端 | Python 3.14、uv、轻量 HTTP 服务、Django 适配器 |
 | 前端 | Vben Admin 5.7.0、Vue 3、Ant Design Vue |
 | 前端工具 | Node.js 22.18.0、pnpm 10.33.0 |
 | 业务数据 | 当前使用 SQLite；MySQL/Redis repository adapter 尚未实现 |
 | 对象存储 | 可替换接口；S3 兼容 provider 使用 AWS SigV4 |
-| 发布基线 | 当前本地 `main` 提交 `4844ae4`；`v0.0.7` 已发布，旧 `v0.0.6` 不改写 |
+| 发布基线 | 当前本地 `main` 为 TTY 修复候选；`v0.0.7` 已发布，旧版本不改写 |
 | 本机部署证据 | `0.0.4` 的 API、前端镜像已无缓存重建；Docker 配置校验通过；完整运行态仍需单独记录 |
 | 云端部署证据 | 本次仅核对 GitHub 仓库与本机 Compose；云端主机和外部服务状态未检查 |
 | 远端引用 | `v0.0.3`、`v0.0.4` 标签和 GitHub Release 均已创建；云端部署仍需单独验收 |
@@ -64,6 +64,7 @@
 | 2026-10-24 | 增加按项目登记仓库自动发现最新正式 GitHub Release，并支持 `latest:true` 服务端下载到受保护 staging；前端提供一键发现、下载和预填发布表单，仍需显式 publish | 后端全量 `120 passed`、88 项子测试；前端 latest focused Vitest、typecheck、生产构建和 `git diff --check` 通过；远端部署与 Bark 线上 staging 待本轮单独验收 |
 | 2026-10-24 | 兼容 Heyue 对象键映射到匿名 API 时的 `vX.Y.Z` 版本路径；只归一化单个前缀 `v`，仍由核心版本校验和已发布资产白名单决定 | 本地公开下载、Django、轻量 HTTP 路由 `9 passed`；远端 `4354f28` 重启后 `v1.0.4` manifest/SHA256SUMS HTTP 200；8000 未监听 |
 | 2026-10-24 | 发布 Fuwu `v0.0.7` 并修复 Heyue Bootstrap 的 stable/manifest 身份绑定与固定安装 argv；远端运行文件同步到 `4844ae4` | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python Bootstrap 语法和真实远端 `--help` 演练通过；远端 `127.0.0.1:8088` 健康、8000 未监听；Heyue stable 保持 `v1.0.4` |
+| 2026-10-24 | 修复 Heyue Shell Bootstrap 的 TTY 继承：不再用 `python3 - "$@" <<'PY'` 让 Python 源码占用标准输入，而是写入受保护临时文件后启动，保证交互安装器继承真实终端 | 本地 `133 passed`、94 subtests、Shell/Python 编译、`uv lock --check`、`uv build`、PTY 回归和 `git diff --check` 通过；待创建 `v0.0.8` 标签、GitHub Release、部署并做远端安装复验 |
 | 2026-10-24 | 将 Heyue 构建说明明确为固定 Bootstrap 安装连接；同一连接每次读取 stable/latest 并自动跟随最新稳定版，版本化地址保留用于锁定版本和审计 | 文档与现有 `/api/downloads/heyue/bootstrap.py`、`bootstrap/install.sh` 契约一致；本轮仅更新说明，未改变下载或发布逻辑 |
 | 2026-10-24 | 项目说明页改为读取绑定原项目的 README；Fuwu 不再复制维护 Heyue 安装说明，保留原有项目字段以兼容既有记录 | 后端全量 `132 passed`、`94` 项子测试，Django check、前端 typecheck、生产构建和 `git diff --check` 通过；真实私有仓库读取、浏览器验收和线上部署仍未完成 |
 

@@ -4,6 +4,7 @@ import hashlib
 import http.client
 import json
 import os
+import pty
 import subprocess
 import sys
 import tempfile
@@ -222,6 +223,32 @@ class PublicLatestTests(unittest.TestCase):
         mismatched = dict(manifest, releaseId=105)
         with self.assertRaises(namespace["BootstrapError"]):  # type: ignore[arg-type]
             binding(pointer, mismatched, current="1.0.4")  # type: ignore[operator]
+
+    def test_shell_bootstrap_preserves_tty_for_python_child(self) -> None:
+        script = Path(__file__).parents[1] / "fuwu_service" / "heyue_bootstrap.sh"
+        with tempfile.TemporaryDirectory() as directory:
+            fake_python = Path(directory) / "python3"
+            fake_python.write_text(
+                "#!/usr/bin/env bash\n"
+                "if [[ -t 0 ]]; then printf 'TTY\\n'; else printf 'NO_TTY\\n'; fi\n",
+                encoding="utf-8",
+            )
+            fake_python.chmod(0o700)
+            output = bytearray()
+
+            def read_from_pty(fd: int) -> bytes:
+                data = os.read(fd, 4096)
+                output.extend(data)
+                return data
+
+            environment = os.environ.copy()
+            environment["PATH"] = f"{directory}:{environment.get('PATH', '')}"
+            with patch.dict(os.environ, environment, clear=True):
+                status = pty.spawn(["bash", str(script), "--interactive"], read_from_pty)
+
+        self.assertEqual(os.waitstatus_to_exitcode(status), 0, output.decode(errors="replace"))
+        self.assertIn(b"TTY", output)
+        self.assertNotIn(b"NO_TTY", output)
 
     def test_anonymous_python_source_chain_uses_latest_manifest_checksums_and_asset(self) -> None:
         client = Client()
