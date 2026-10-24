@@ -5,9 +5,11 @@ const SAFE_REQUEST_CODES = new Set([
   'ERR_NETWORK',
   'ETIMEDOUT',
 ]);
+const SAFE_SERVER_CODES = new Set(['release_conflict']);
 
 export type SafeRequestError = Error & {
   code?: string;
+  serverCode?: string;
   status?: number;
 };
 
@@ -24,8 +26,9 @@ export function sanitizeRequestError(error: unknown): SafeRequestError {
   ) as SafeRequestError;
   const candidate = error as {
     code?: unknown;
-    response?: { status?: unknown };
+    response?: { data?: { code?: unknown }; status?: unknown };
     status?: unknown;
+    serverCode?: unknown;
   } | null;
 
   if (
@@ -42,7 +45,16 @@ export function sanitizeRequestError(error: unknown): SafeRequestError {
   ) {
     safeError.status = Number(status);
   }
+  const serverCode = candidate?.response?.data?.code ?? candidate?.serverCode;
+  if (typeof serverCode === 'string' && SAFE_SERVER_CODES.has(serverCode)) {
+    safeError.serverCode = serverCode;
+  }
   return safeError;
+}
+
+export function isReleaseConflictError(error: unknown): boolean {
+  const candidate = error as { serverCode?: unknown } | null;
+  return candidate?.serverCode === 'release_conflict';
 }
 
 export function rejectWithSanitizedRequestError(

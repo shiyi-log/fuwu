@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  isReleaseConflictError,
   rejectWithSanitizedRequestError,
   sanitizeRequestError,
 } from './request-errors';
@@ -38,6 +39,23 @@ describe('sanitizeRequestError', () => {
     expect(JSON.stringify(error)).not.toContain('server-canary');
   });
 
+  it('preserves the allowlisted release conflict code without response data', () => {
+    const error = sanitizeRequestError({
+      response: {
+        status: 409,
+        data: {
+          code: 'release_conflict',
+          message: 'same version already has a different digest',
+        },
+      },
+    });
+
+    expect(error.status).toBe(409);
+    expect(error.serverCode).toBe('release_conflict');
+    expect(JSON.stringify(error)).not.toContain('different digest');
+    expect(error).not.toHaveProperty('response');
+  });
+
   it('drops unknown codes and invalid statuses', () => {
     const error = sanitizeRequestError({
       code: 'CUSTOM_SECRET_CODE',
@@ -47,6 +65,14 @@ describe('sanitizeRequestError', () => {
 
     expect(error.code).toBeUndefined();
     expect(error.status).toBeUndefined();
+  });
+});
+
+describe('isReleaseConflictError', () => {
+  it('recognizes only the sanitized allowlisted code', () => {
+    expect(isReleaseConflictError({ serverCode: 'release_conflict' })).toBe(true);
+    expect(isReleaseConflictError({ serverCode: 'project_conflict' })).toBe(false);
+    expect(isReleaseConflictError({ status: 409 })).toBe(false);
   });
 });
 

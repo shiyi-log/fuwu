@@ -39,6 +39,7 @@ import {
   stageRemoteReleaseApi,
 } from '#/api';
 
+import { isReleaseConflictError } from '#/api/request-errors';
 import { isStageOutcomeUncertain } from './stage-errors';
 
 const { hasAccessByCodes } = useAccess();
@@ -447,8 +448,12 @@ async function submitPublish() {
     stageRemotePending.value = false;
     publishOpen.value = false;
     await loadData();
-  } catch {
-    message.error('发布任务提交失败，请查看服务端返回的安全错误信息。');
+  } catch (error) {
+    // The request interceptor already presents the bounded conflict message;
+    // avoid showing the same toast again from this submit handler.
+    if (!isReleaseConflictError(error)) {
+      message.error('发布任务提交失败，请查看服务端返回的安全错误信息。');
+    }
   } finally {
     submitting.value = false;
   }
