@@ -48,6 +48,7 @@
 - 增加 `POST /api/release-storage/stage-remote` 的 `latest: true` 模式；服务端自动发现、下载和校验正式 Release 到受保护 staging，响应只返回脱敏发行摘要，不自动发布或更新 `latest.json`。
 - 发行管理页面增加“自动下载并 staging 最新正式 Release”操作，成功后预填普通 publish 表单；保留按 Tag 获取和手工确认路径。
 - 增加 Heyue 匿名 Bootstrap `/api/downloads/heyue/bootstrap.py` 及兼容的 `/api/downloads/heyue/bootstrap/install.sh`；引导固定使用 Fuwu stable 发行链，校验响应摘要、manifest、`SHA256SUMS`、Python 归档和归档元数据后才运行安装器，不依赖 GitHub、PAT、管理会话或 AWS 凭据。
+- 项目说明页读取绑定原项目的根目录 README，并显示来源仓库和文件信息；安装与构建说明随原项目更新，Fuwu 不再复制维护 Heyue 文案。原有 `public_api`、`build_instructions` 字段和设置接口继续保留以兼容既有数据；本轮后端全量 `132 passed`、`94` 项子测试、Django check、前端 typecheck 和生产构建通过，真实私有仓库读取与线上部署仍需单独验收。
 - 本次候选的本地验证为后端 `120 passed`、88 项子测试，前端 latest focused Vitest、typecheck、生产构建和编译检查通过；真实 GitHub 授权、远端部署和 Bark 线上 staging 仍单独记录。
 
 ## 0.0.6 远端验收补充

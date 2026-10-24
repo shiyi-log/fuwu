@@ -79,7 +79,7 @@
 
 ## 项目
 
-`GET /api/projects` 返回当前账号可访问的项目。项目对象包括 `id`、`name`、`repository`、`description`、`public_api`、`build_instructions`、`active` 和 `created_at`。
+`GET /api/projects` 返回当前账号可访问的项目。项目对象包括 `id`、`name`、`repository`、`description`、`public_api`、`build_instructions`、`active` 和 `created_at`。项目说明页面使用绑定仓库的原始 README；`public_api` 和 `build_instructions` 字段仍保留用于兼容既有项目记录和设置接口，不再作为 Heyue 安装说明的唯一来源。
 
 创建项目示例：
 
@@ -95,6 +95,8 @@
 `id`、`name` 和 `repository` 必填。`id` 为 1 至 63 位小写 slug，允许点、下划线和连字符，不允许路径遍历。名称去除首尾空白后为 1 至 120 个字符；说明、公共 API 和构建方式文本最长各 12,000 个字符。`repository` 接受 `owner/repo` 或不含凭据、查询参数、片段的 GitHub HTTPS 地址。
 
 `PATCH /api/projects/{id}` 可更新非空的 `name`、`description`、`public_api`、`build_instructions` 和布尔 `active`。仓库绑定创建后不可修改，已有发行记录不会随项目说明变更而改写。
+
+`GET /api/projects/{id}/documentation` 按当前账号的项目范围直接读取项目绑定 GitHub 仓库的根目录 README，并返回 `project`、`repository`、`path`、`sha`、`content` 和安全的 `sourceUrl` 元数据。公开仓库不需要 PAT；如果服务端已配置全局 GitHub 授权，接口会仅在服务端向 GitHub 请求时使用它，以支持私有仓库。响应不包含授权令牌，README 也不写入 Fuwu 项目记录。读取失败时返回固定的 `github_documentation_not_found`、`github_documentation_unavailable`、`github_documentation_invalid` 或 `github_documentation_too_large` 错误，不回显 GitHub 响应正文，也不会回退到数据库中的旧说明。
 
 GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/github-authorization` 管理，是所有项目远端 Release staging 共用的全局配置。请求需要 `settings.manage`；`POST`、`DELETE` 和 `POST /api/settings/github-authorization/check` 还必须使用 HTTPS（本机回环连接可用于初始化）。`POST` 请求仅接受 `{ "token": "..." }`，服务端调用 GitHub `/user` 校验账号身份并检查绑定仓库的读取权限；账号对仓库拥有写入或管理权限不会阻止读取检查，`permissionCheck.readOnly` 只反映账号权限状态。远端 staging 时会将项目仓库与登记值绑定，并使用该全局令牌访问 GitHub Release。响应只包含 `authorized`、`login`、`node_id`、`scopes`、`authorizedAt` 和不含凭据的 `permissionCheck` 元数据；令牌只保存在服务端配置的 0600 secrets 文件，不进入 SQLite、操作日志或任何 API 响应。`POST /api/settings/github-authorization/check` 重新校验既有授权而不刷新保存时间，`DELETE` 会撤销全局授权。
 

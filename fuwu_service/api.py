@@ -13,6 +13,7 @@ from .core import PROJECT_RE, RBAC, ReleaseError, ReleaseService, validate_chann
 from .github_auth import (
     get_github_authorization_store,
     github_required_repository,
+    read_github_repository_readme,
     verify_github_repository_access,
     verify_github_token,
 )
@@ -161,6 +162,23 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                     raise ReleaseError("forbidden", "permission denied", 403)
                 code, response = service.create_project(body, actor=actor, request_id=request_id)
                 project_id = response.get("id")
+            else:
+                code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
+        elif match := re.fullmatch(r"/api/projects/([a-z0-9][a-z0-9._-]*)/documentation", path):
+            category, action, route = "project", "documentation", "/api/projects/{id}/documentation"
+            project_id = _allowed_project(rbac, authorization, match[1])
+            if method == "GET":
+                project = service.repository.get_project(project_id)
+                if not project:
+                    raise ReleaseError("project_not_found", "project was not found", 404)
+                # Public GitHub repositories are readable without a PAT.  A
+                # configured server-side token is optional and only enables
+                # documentation reads for private repositories; it never
+                # comes from the request or gets returned to the client.
+                github_token = _github_authorizations().get_token()
+                response = read_github_repository_readme(project["repository"], token=github_token)
+                response["project"] = project_id
+                code = 200
             else:
                 code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
         elif match := re.fullmatch(r"/api/projects/([a-z0-9][a-z0-9._-]*)", path):

@@ -117,6 +117,25 @@ class ManagementApiTests(unittest.TestCase):
         self.assertEqual(result["repository"], "owner/alpha")
         discover.assert_called_once_with("owner/alpha", github_token="ghs-test-token")
 
+    def test_project_documentation_reads_registered_public_repository_without_global_github_token(self):
+        token = self.login("reader", "Strong-Reader-Password-2026")
+        github_store = type("GithubStore", (), {"get_token": lambda _self: None})()
+        documentation = {
+            "repository": "owner/alpha",
+            "path": "README.md",
+            "sha": "a" * 40,
+            "content": "# Alpha\n\n来自原项目。\n",
+            "sourceUrl": "https://github.com/owner/alpha/blob/main/README.md",
+        }
+        with patch("fuwu_service.api._github_authorizations", return_value=github_store), \
+             patch("fuwu_service.api.read_github_repository_readme", return_value=documentation) as readme:
+            status, result = self.call("GET", "/api/projects/alpha/documentation", token=token)
+        self.assertEqual(status, 200)
+        self.assertEqual(result["project"], "alpha")
+        self.assertEqual(result["content"], documentation["content"])
+        readme.assert_called_once_with("owner/alpha", token=None)
+        self.assertEqual(self.call("GET", "/api/projects/beta/documentation", token=token)[0], 403)
+
     def test_operational_logs_use_safe_route_and_exclude_credentials(self):
         token = self.login()
         canary = "PASSWORD-CANARY-DO-NOT-LOG"

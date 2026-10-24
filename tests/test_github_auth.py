@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 import stat
@@ -11,6 +12,7 @@ from pathlib import Path
 from fuwu_service.github_auth import (
     GitHubAuthorizationStore,
     github_required_repository,
+    read_github_repository_readme,
     verify_github_repository_access,
     verify_github_token,
 )
@@ -100,6 +102,50 @@ class GitHubTokenVerificationTests(unittest.TestCase):
         self.assertEqual(github_required_repository({"FUWU_GITHUB_REQUIRED_REPOSITORY": "owner/repo"}), "owner/repo")
         with self.assertRaisesRegex(ReleaseError, "repository configuration is invalid"):
             github_required_repository({"FUWU_GITHUB_REQUIRED_REPOSITORY": "https://github.com/owner/repo"})
+
+    def test_repository_readme_decodes_bounded_contents_response(self):
+        content = "# Heyue\n\n安装说明来自原项目。\n"
+        opener = _Opener(_Response({
+            "name": "README.md",
+            "path": "README.md",
+            "sha": "a" * 40,
+            "encoding": "base64",
+            "content": base64.b64encode(content.encode()).decode(),
+            "html_url": "https://github.com/shiyi-log/heyue/blob/main/README.md",
+        }))
+        result = read_github_repository_readme("shiyi-log/heyue", token="github_pat_example", opener=opener)
+        self.assertEqual(result["repository"], "shiyi-log/heyue")
+        self.assertEqual(result["path"], "README.md")
+        self.assertEqual(result["sha"], "a" * 40)
+        self.assertEqual(result["content"], content)
+        self.assertEqual(result["sourceUrl"], "https://github.com/shiyi-log/heyue/blob/main/README.md")
+        self.assertEqual(opener.request.full_url, "https://api.github.com/repos/shiyi-log/heyue/readme")
+        self.assertEqual(opener.request.get_header("Authorization"), "Bearer github_pat_example")
+
+    def test_repository_readme_maps_upstream_errors_to_fixed_messages(self):
+        for status, message in ((404, "not found"), (403, "unavailable")):
+            with self.subTest(status=status):
+                opener = _Opener(error=urllib.error.HTTPError("https://api.github.com/readme", status, "secret body", {}, None))
+                with self.assertRaisesRegex(ReleaseError, message):
+                    read_github_repository_readme("shiyi-log/heyue", token="github_pat_example", opener=opener)
+
+    def test_repository_readme_rejects_invalid_content_without_echoing_secret(self):
+        secret = "github_pat_secret"
+        opener = _Opener(_Response({"encoding": "base64", "content": "%%%"}))
+        with self.assertRaisesRegex(ReleaseError, "project description is invalid") as error:
+            read_github_repository_readme("shiyi-log/heyue", token=secret, opener=opener)
+        self.assertNotIn(secret, str(error.exception))
+
+    def test_repository_readme_rejects_response_over_limit_even_when_reader_ignores_limit(self):
+        oversized = base64.b64encode(b"x" * (512_000 + 1)).decode()
+        opener = _Opener(_Response({
+            "path": "README.md",
+            "sha": "a" * 40,
+            "encoding": "base64",
+            "content": oversized,
+        }))
+        with self.assertRaisesRegex(ReleaseError, "project description is too large"):
+            read_github_repository_readme("shiyi-log/heyue", opener=opener)
 
 
 class GitHubAuthorizationStoreTests(unittest.TestCase):

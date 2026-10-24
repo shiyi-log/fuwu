@@ -11,6 +11,15 @@ export interface ProjectRecord {
   created_at?: string;
 }
 
+export interface ProjectDocumentation {
+  project: string;
+  repository: string;
+  path: string;
+  sha?: string | null;
+  sourceUrl?: string;
+  content: string;
+}
+
 export interface GithubAuthorization {
   authorized: boolean;
   login?: string | null;
@@ -94,6 +103,10 @@ export interface ObjectStorageSettingsPayload {
 export async function listProjectsApi() {
   const data = await requestClient.get<{ items: ProjectRecord[] }>('/projects', { responseReturn: 'body' });
   return data.items;
+}
+
+export function getProjectDocumentationApi(id: string) {
+  return requestClient.get<ProjectDocumentation>(`/projects/${encodeURIComponent(id)}/documentation`, { responseReturn: 'body' });
 }
 
 export function createProjectApi(data: Pick<ProjectRecord, 'description' | 'id' | 'name' | 'repository'>) {

@@ -10,6 +10,10 @@ fuwu 为多个软件项目提供发行记录、制品校验、稳定版与测试
 - 数据仓库：初始实现使用 SQLite；仓库接口可替换。Compose 中的 MySQL、Redis 服务不代表应用已接入这两种数据仓库。
 - 制品存储：S3 兼容接口与 AWS SigV4；安装器和更新器通过匿名 HTTPS 读取。
 
+## 项目说明来源
+
+项目注册时保存 GitHub `owner/repository` 作为代码来源。管理台的“项目说明”页面通过 `GET /api/projects/{id}/documentation` 直接读取该仓库根目录的 `README.md`，所以项目的安装方法、构建入口和使用说明只需在原项目 GitHub README 中维护。公开仓库不需要 PAT；私有仓库可使用 Fuwu 系统设置中受保护的全局 GitHub 授权。读取失败会显示固定错误，不会用 Fuwu 数据库中旧的说明字段伪装成最新内容。
+
 ## 本地启动
 
 需要 Python 3.14 和 uv。在仓库根目录运行：

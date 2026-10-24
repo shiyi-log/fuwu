@@ -4,7 +4,7 @@
 
 ## 项目目标
 
-建设可供多个软件项目使用的通用发行管理服务，提供项目登记、发行、制品完整性校验、stable/beta 渠道指针、回滚、账号权限和操作审计。公开文档只定义通用接口与构建方式，不登记部署专用项目资料。
+建设可供多个软件项目使用的通用发行管理服务，提供项目登记、发行、制品完整性校验、stable/beta 渠道指针、回滚、账号权限和操作审计。项目说明页面读取绑定原项目的 README，避免在 Fuwu 中重复维护安装和构建文案。
 
 ## 当前基线
 
@@ -29,7 +29,7 @@
 | M0 | Vben 基础、项目/API 文档和 CI 建立 | 已完成 |
 | M1 | Django 适配、SQLite repository、账号与项目权限 | 已完成；以当前测试结果复核 |
 | M2 | SigV4 对象存储、受保护 staging 发布、回滚和审计 | 本地实现完成；真实云存储需单独验收 |
-| M3 | 项目导航、发行管理、日志、系统设置与构建说明 | 本地实现完成；浏览器验收需单独记录 |
+| M3 | 项目导航、发行管理、日志、系统设置与原项目说明读取 | 本地实现完成；浏览器验收需单独记录 |
 | M4 | Docker Compose 构建及健康检查 | 本机 `0.0.3` 发布基线镜像无缓存重建；API、前端和 MySQL 健康检查通过，Redis 运行中但未配置健康检查；账号登录也已本地验证 |
 | M5 | 清理公开仓库全部可达历史和发行元数据 | `main` 已对齐；`v0.0.3` 标签和 GitHub Release 已创建，云端部署仍需单独验收 |
 | M6 | GitHub 授权、远端 Release staging、根目录配置和成员管理 | 远端 staging 与成员管理本地实现完成；当前候选改为系统设置全局 PAT，接口和文档正在复核；真实 PAT、对象存储、云端部署和客户端验收仍需单独记录 |
@@ -41,7 +41,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 健康检查 | `GET /healthz` | 公开 | 返回服务状态 | 固定健康响应 | `fuwu_service/api.py`、`release_api/urls.py` |
 | 账号 | `/api/auth/*`、`/api/user/info`、`/api/roles`、`/api/users*` | 会话；账号管理需 `users.manage` | 登录、登出、账号、角色和密码操作 | 固定认证与权限错误 | `fuwu_service/accounts.py`、`fuwu_service/api.py` |
-| 项目 | `/api/projects*` | 已登录查询；写操作需 `projects.manage` 和项目范围 | 通用仓库元数据、公共接口说明、构建说明 | 非法项目输入不回显字段 | `fuwu_service/projects.py`、`fuwu_service/core.py` |
+| 项目 | `/api/projects*`、`GET /api/projects/{id}/documentation` | 已登录查询；写操作需 `projects.manage` 和项目范围 | 通用仓库元数据；项目说明接口按绑定仓库读取原始 README | 非法项目输入、未授权 GitHub 或上游失败均使用固定错误；不回显令牌和上游正文 | `fuwu_service/projects.py`、`fuwu_service/github_auth.py`、`fuwu_service/api.py`、相关测试 |
 | 发行 | `/api/releases` | `release.storage.read` 和项目范围 | 按项目/渠道返回版本、摘要、制品与 HEAD 状态 | 固定查询与授权错误 | `fuwu_service/core.py`、`tests/test_core.py` |
 | 存储任务 | `/api/release-storage/status`、`/publish`、`/rollback`、`/audit` | 分别为 `read`、`publish`、`rollback` 权限；回滚需超级管理员确认 | staging 引用、不可变发行、latest 指针和审计 | 请求冲突、存储校验失败及恢复待核对均使用固定错误 | `fuwu_service/core.py`、`tests/test_publish_consistency.py` |
 | 操作日志 | `GET /api/logs` | `logs.read` 和项目范围 | 结构化操作记录 | 固定查询错误；不记录请求正文或令牌 | `fuwu_service/administration.py`、`tests/test_management_api.py` |
@@ -65,6 +65,7 @@
 | 2026-10-24 | 兼容 Heyue 对象键映射到匿名 API 时的 `vX.Y.Z` 版本路径；只归一化单个前缀 `v`，仍由核心版本校验和已发布资产白名单决定 | 本地公开下载、Django、轻量 HTTP 路由 `9 passed`；远端 `4354f28` 重启后 `v1.0.4` manifest/SHA256SUMS HTTP 200；8000 未监听 |
 | 2026-10-24 | 发布 Fuwu `v0.0.7` 并修复 Heyue Bootstrap 的 stable/manifest 身份绑定与固定安装 argv；远端运行文件同步到 `4844ae4` | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python Bootstrap 语法和真实远端 `--help` 演练通过；远端 `127.0.0.1:8088` 健康、8000 未监听；Heyue stable 保持 `v1.0.4` |
 | 2026-10-24 | 将 Heyue 构建说明明确为固定 Bootstrap 安装连接；同一连接每次读取 stable/latest 并自动跟随最新稳定版，版本化地址保留用于锁定版本和审计 | 文档与现有 `/api/downloads/heyue/bootstrap.py`、`bootstrap/install.sh` 契约一致；本轮仅更新说明，未改变下载或发布逻辑 |
+| 2026-10-24 | 项目说明页改为读取绑定原项目的 README；Fuwu 不再复制维护 Heyue 安装说明，保留原有项目字段以兼容既有记录 | 后端全量 `132 passed`、`94` 项子测试，Django check、前端 typecheck、生产构建和 `git diff --check` 通过；真实私有仓库读取、浏览器验收和线上部署仍未完成 |
 
 当前包版本来自 `pyproject.toml`；版本摘要、兼容性、迁移和验证状态见[版本记录](docs/VERSION_HISTORY.md)。标签或镜像存在不等于 CI、真实对象存储或外部客户端验收通过。
 
