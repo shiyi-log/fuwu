@@ -64,6 +64,7 @@
 | 2026-10-24 | 增加按项目登记仓库自动发现最新正式 GitHub Release，并支持 `latest:true` 服务端下载到受保护 staging；前端提供一键发现、下载和预填发布表单，仍需显式 publish | 后端全量 `120 passed`、88 项子测试；前端 latest focused Vitest、typecheck、生产构建和 `git diff --check` 通过；远端部署与 Bark 线上 staging 待本轮单独验收 |
 | 2026-10-24 | 兼容 Heyue 对象键映射到匿名 API 时的 `vX.Y.Z` 版本路径；只归一化单个前缀 `v`，仍由核心版本校验和已发布资产白名单决定 | 本地公开下载、Django、轻量 HTTP 路由 `9 passed`；远端 `4354f28` 重启后 `v1.0.4` manifest/SHA256SUMS HTTP 200；8000 未监听 |
 | 2026-10-24 | 发布 Fuwu `v0.0.7` 并修复 Heyue Bootstrap 的 stable/manifest 身份绑定与固定安装 argv；远端运行文件同步到 `4844ae4` | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python Bootstrap 语法和真实远端 `--help` 演练通过；远端 `127.0.0.1:8088` 健康、8000 未监听；Heyue stable 保持 `v1.0.4` |
+| 2026-10-24 | 将 Heyue 构建说明明确为固定 Bootstrap 安装连接；同一连接每次读取 stable/latest 并自动跟随最新稳定版，版本化地址保留用于锁定版本和审计 | 文档与现有 `/api/downloads/heyue/bootstrap.py`、`bootstrap/install.sh` 契约一致；本轮仅更新说明，未改变下载或发布逻辑 |
 
 当前包版本来自 `pyproject.toml`；版本摘要、兼容性、迁移和验证状态见[版本记录](docs/VERSION_HISTORY.md)。标签或镜像存在不等于 CI、真实对象存储或外部客户端验收通过。
 

@@ -2,6 +2,27 @@
 
 Heyue 的全新主机安装器使用 Fuwu 的匿名 HTTPS 发行接口，不需要 GitHub 账号、PAT、Fuwu 管理会话或 AWS 对象存储凭据。
 
+## 统一安装入口（自动获取最新稳定版）
+
+项目的构建方式可以只展示一个固定安装连接，不需要随着 Heyue 版本发布修改文案：
+
+```text
+https://fuwu.1213.cc/api/downloads/heyue/bootstrap.py
+```
+
+推荐的下载后执行命令如下：
+
+```sh
+curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+  --output heyue-bootstrap.py \
+  'https://fuwu.1213.cc/api/downloads/heyue/bootstrap.py' \
+  && python3 heyue-bootstrap.py
+```
+
+该连接是固定的 Bootstrap 入口，不绑定 `1.0.2` 或其他具体版本。每次执行时，Bootstrap 都会重新读取 Fuwu 的 `stable/latest.json`，自动定位当前已发布的最新稳定版，然后校验 `manifest.json`、`SHA256SUMS` 和 Python 安装归档，最后才进入安装器。发布新的 stable 版本后，继续使用同一连接即可获取新版本。
+
+如果需要锁定某个版本或复核历史发布，才使用下面的版本化 manifest、校验清单和归档地址；版本化对象仍保持不可变。
+
 全新主机可以先读取固定的匿名 bootstrap，再由 bootstrap 完成发行链校验并启动已校验包内的安装器：
 
 ```sh
