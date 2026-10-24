@@ -1,0 +1,1 @@
+import{Nn as e,dr as t}from"../jse/index-index-DfIRxdNF.js";import{n}from"./styleChecker-BLMx6Su7.js";var r=(()=>{let r=t(!1);return e(()=>{r.value=n()}),r});export{r as t};
