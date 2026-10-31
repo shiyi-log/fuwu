@@ -24,7 +24,7 @@ from typing import Any, Mapping
 
 from django.contrib.auth.hashers import PBKDF2PasswordHasher
 
-from .core import ReleaseError
+from .errors import ReleaseError
 from .projects import ProjectInputError, validate_project_id
 
 KNOWN_PERMISSIONS = frozenset({

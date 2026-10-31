@@ -313,7 +313,7 @@ class S3ConditionalTests(unittest.TestCase):
         self.assertEqual(request.get_header("If-none-match"), "*")
         self.assertIn("if-none-match", request.get_header("Authorization"))
         failure = urllib.error.HTTPError(request.full_url, 412, "sensitive provider response", {}, None)
-        with patch("fuwu_service.core._open_s3_url", side_effect=failure):
+        with patch("fuwu_service.object_store._open_s3_url", side_effect=failure):
             with self.assertRaises(ReleaseError) as error:
                 store.put_object("releases/fuwu/v0.0.1/a", b"a", if_none_match=True)
         self.assertEqual(error.exception.code, "object_precondition_failed")
@@ -325,7 +325,7 @@ class S3ConditionalTests(unittest.TestCase):
             path.write_text("AWS_ACCESS_KEY_ID=example\nAWS_SECRET_ACCESS_KEY=test-secret\n")
             path.chmod(0o600)
             mode = path.stat().st_mode
-            with patch("fuwu_service.core.os.fstat", return_value=SimpleNamespace(st_mode=mode, st_uid=501)):
+            with patch("fuwu_service.object_store.os.fstat", return_value=SimpleNamespace(st_mode=mode, st_uid=501)):
                 with self.assertRaises(ReleaseError) as error:
                     load_aws_credentials({"AWS_CREDENTIALS_FILE": str(path)})
             self.assertEqual(error.exception.code, "credentials_not_protected")

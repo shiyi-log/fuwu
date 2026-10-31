@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from .core import RBAC, ReleaseError
+from .errors import ReleaseError
+from .rbac import RBAC
 
 
 def login(rbac: RBAC, body: Mapping[str, Any], *, client_id: str = "local") -> dict[str, Any]:

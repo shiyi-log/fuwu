@@ -11,7 +11,7 @@ from __future__ import annotations
 from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Any, Mapping
 
-from .core import ReleaseService
+from .release_service import ReleaseService
 
 
 class ReleaseWorker:

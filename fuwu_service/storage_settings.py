@@ -16,7 +16,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
-from .core import AwsCredentials, ReleaseError, S3ObjectStore
+from .errors import ReleaseError
+from .object_store import AwsCredentials, S3ObjectStore
 
 
 STORAGE_FIELDS = ("bucket", "region", "endpoint", "prefix")

@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
-from .core import ReleaseError
+from .errors import ReleaseError
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG_PATH = ROOT_DIR / "fuwu.config.json"

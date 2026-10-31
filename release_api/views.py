@@ -17,7 +17,10 @@ from fuwu_service.bootstrap import (
     heyue_python_bootstrap_script,
     heyue_python_bootstrap_sha256,
 )
-from fuwu_service.core import RBAC, ReleaseError, ReleaseService, SQLiteRepository
+from fuwu_service.errors import ReleaseError
+from fuwu_service.rbac import RBAC
+from fuwu_service.release_service import ReleaseService
+from fuwu_service.repository import SQLiteRepository
 from fuwu_service.server import build_storage, request_identifier
 
 

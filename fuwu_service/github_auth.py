@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
-from .core import ReleaseError
+from .errors import ReleaseError
 UTC = dt.timezone.utc
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REQUIRED_REPOSITORY = "shiyi-log/heyue"

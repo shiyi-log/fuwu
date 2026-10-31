@@ -32,10 +32,10 @@ PERMISSIONS = {READER: ["release.storage.read"], ADMIN: ["release.storage.read",
 class SessionTests(unittest.TestCase):
     def test_sessions_expire_reject_tampering_and_follow_current_permissions(self) -> None:
         rbac = RBAC(PERMISSIONS)
-        with patch("fuwu_service.core.time.time", return_value=1000):
+        with patch("fuwu_service.rbac.time.time", return_value=1000):
             session, expires_at = rbac.issue_session(ADMIN)
         self.assertEqual(expires_at, 4600)
-        with patch("fuwu_service.core.time.time", return_value=1001):
+        with patch("fuwu_service.rbac.time.time", return_value=1001):
             actor, permissions = rbac.authenticate("Bearer " + session)
             self.assertIn("superadmin", permissions)
             self.assertNotIn(ADMIN[:8], actor)
@@ -47,7 +47,7 @@ class SessionTests(unittest.TestCase):
                 self.assertEqual(error.exception.status, 401)
             with self.assertRaises(ReleaseError):
                 RBAC({}).authenticate("Bearer " + session)
-        with patch("fuwu_service.core.time.time", return_value=4600):
+        with patch("fuwu_service.rbac.time.time", return_value=4600):
             with self.assertRaises(ReleaseError):
                 rbac.authenticate("Bearer " + session)
 

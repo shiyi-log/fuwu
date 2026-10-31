@@ -9,7 +9,10 @@ from typing import Any, Mapping
 
 from . import auth
 from .administration import administration_store
-from .core import PROJECT_RE, RBAC, ReleaseError, ReleaseService, validate_channel
+from .errors import ReleaseError
+from .rbac import RBAC
+from .release_service import ReleaseService
+from .validation import PROJECT_RE, validate_channel
 from .github_auth import (
     get_github_authorization_store,
     github_required_repository,
