@@ -135,14 +135,18 @@ class ReleaseServiceTests(unittest.TestCase):
 
     def test_version_format_and_carry(self) -> None:
         self.assertEqual(validate_version("0.0.1"), "0.0.1")
+        self.assertEqual(validate_version("1.0.14"), "1.0.14")
+        self.assertEqual(validate_version("10.2.3"), "10.2.3")
         self.assertEqual(next_version("0.0.0"), "0.0.1")
         self.assertEqual(next_version("0.0.9"), "0.1.0")
         self.assertEqual(next_version("0.9.9"), "1.0.0")
         self.assertEqual(next_version("9.9.8"), "9.9.9")
         with self.assertRaises(ReleaseError):
-            validate_version("0.0.10")
+            validate_version("01.0.1")
         with self.assertRaises(ReleaseError):
             validate_version("v0.0.1")
+        with self.assertRaises(ReleaseError):
+            next_version("0.0.10")
         with self.assertRaises(ReleaseError):
             next_version("9.9.9")
 

@@ -1,6 +1,6 @@
 # 版本记录
 
-版本号使用三段数字，每段只允许一位数字。某段到达 9 后向左进位并将低位归零：`0.0.9` 的下一版为 `0.1.0`，`0.9.9` 的下一版为 `1.0.0`。`0.0.10` 等两位数字段版本无效。Git 标签在数字版本前加 `v`。
+托管项目发行版本使用无前导零的三段 SemVer 数字，每段可包含多位数字，例如 `1.0.14`；Git 标签在数字版本前加 `v`。Fuwu 自身版本沿用单数字进位序列：某段到达 9 后向左进位并将低位归零，例如 `0.0.9` 的下一版为 `0.1.0`、`0.9.9` 的下一版为 `1.0.0`；该序列不使用 `0.0.10`。
 
 ## 版本一览
 
@@ -13,6 +13,7 @@
 | `0.0.6` | 当前候选工作树；本轮准备创建正式标签与 Release | 2026-10-24 | 保持 SQLite；无数据迁移 | 将 GitHub 授权统一为 `/api/settings/github-authorization` 全局接口；增加 Heyue Python/shell Bootstrap；远端 staging、publish 和 v1 manifest 字段保持兼容 | 本地 `126 passed`、92 subtests、Django check、`uv build`、Bootstrap 编译和远端 8088/Bootstrap 只读验收通过；Heyue `v1.0.5` 发布与 stable 指针由联合发布流程单独记录 |
 | `0.0.7` | GitHub Release 已发布；标签固定 `4844ae4` | 2026-10-24 | 保持 SQLite；无数据迁移 | Heyue Bootstrap 强绑定 stable 指针与不可变 manifest，并固定传入已核验版本和交互模式；stable/latest 指针保持兼容 | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、嵌入 Python/Shell 语法和 argv 回归通过；远端 8088 健康、8000 未监听、真实 Bootstrap `--help` 通过；Heyue stable 保持 `v1.0.4` |
 | `0.0.8` | GitHub Release 已发布；标签固定 `468972d` | 2026-10-25 | 保持 SQLite；无数据迁移 | Heyue Shell Bootstrap 将 Python 主体写入受保护临时文件后启动，交互安装器继承调用端 TTY；stable/latest、匿名下载和固定安装 argv 契约保持兼容 | 本地 `133 passed`、94 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python 编译和 PTY 回归通过；生产 revision `468972d`、8088 健康 200、线上 Bootstrap 摘要读回通过；Heyue 测试服务器修复后完整安装待复验 |
+| `0.0.9` | 源码候选；正式 tag/Release 与生产部署待完成 | 2026-11-10 | 保持 SQLite；无数据迁移 | 托管项目发行版本接受完整三段 SemVer；latest GitHub Release 改为 `release.storage.read` 只读权限；新增受 `release.storage.publish` 保护的 `/api/release-storage/sync-latest`，自动发现、暂存、校验并发布新正式版，避免降级和同版本覆盖 | 后端 `139 passed`、96 subtests，Django check、迁移漂移检查、前端 focused Vitest `28 passed`、typecheck 和生产构建通过；真实 Heyue `v1.0.14` 下载、本地内存存储自动发布、重复跳过、匿名制品 SHA256 和浏览器验收通过；生产 S3 与公网客户端验收待本轮完成 |
 
 ## 0.0.2 变更
 

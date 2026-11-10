@@ -6,7 +6,7 @@
 
 - 除健康检查和登录外，管理接口需要 `Authorization: Bearer <会话>`。
 - JSON 请求体必须为对象，最大 65,536 字节。响应设置 `Cache-Control: no-store`。
-- `requestId` 依次取 `Idempotency-Key`、`X-Request-ID`、请求体 `requestId`；未提供时由服务生成。对象存储设置接口始终由服务生成 request ID，避免凭据被写入审计或操作日志。
+- `requestId` 依次取 `Idempotency-Key`、`X-Request-ID`、请求体 `requestId`；未提供时由服务生成。对象存储设置、GitHub 授权及检查、远端 staging、自动同步接口始终由服务生成 request ID，避免凭据或调用方提供的重复标识进入敏感操作的审计和幂等范围。
 - request ID 长度为 1 至 128 个 ASCII 字母、数字、点、下划线或连字符，且首字符为字母或数字；不符合格式时服务会生成新值。
 - 集合接口一般返回 `{"items":[...]}`。登录接口返回 `{"code":0,"data":...}`；其他成功接口返回 JSON 对象。
 - 错误响应使用固定错误码和消息，不回显密码、令牌、存储密钥、未知字段值或本机路径。
@@ -59,8 +59,9 @@
 | `GET`、`HEAD` | `/api/downloads/heyue/bootstrap.py` | 公开；固定 Heyue Python 安装引导 | 200；资产不可用为 503 |
 | `GET` | `/releases/{storage-key}` | 公开；Heyue 对象存储兼容入口，仅已发布 stable 对象 | 200；未知键、遍历或未发布对象为 404 |
 | `GET` | `/api/release-storage/status` | `release.storage.read` 和项目范围 | 200 |
-| `GET` | `/api/release-storage/latest?project={id}` | `release.storage.publish` 和项目范围；按项目绑定仓库读取 GitHub | 200；没有正式 Release 为 404 |
+| `GET` | `/api/release-storage/latest?project={id}` | `release.storage.read` 和项目范围；按项目绑定仓库读取 GitHub | 200；没有正式 Release 为 404 |
 | `POST` | `/api/release-storage/publish` | `release.storage.publish` 和项目范围 | 201；幂等重放为 200 |
+| `POST` | `/api/release-storage/sync-latest` | `release.storage.publish` 和项目范围；自动同步最新正式版 | 201 发布；200 已同步或跳过降级 |
 | `POST` | `/api/release-storage/stage-remote` | `release.storage.publish` | 201；按项目授权下载 GitHub Release 资产到受保护 staging job |
 | `POST` | `/api/release-storage/rollback` | `release.storage.rollback`、项目范围和超级管理员 | 200 |
 | `GET` | `/api/release-storage/audit` | `release.storage.read` 和项目范围 | 200 |
@@ -102,7 +103,7 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 
 ## 版本与发行查询
 
-版本由三段数字组成，每段仅一位，范围为 0 至 9。例如 `0.0.9` 的下一版本为 `0.1.0`；`0.0.10` 无效。Git 标签格式为 `v<版本号>`，`revision` 必须是 40 位十六进制 Git SHA。
+托管项目发行版本由三个无前导零的非负整数段组成，例如 `1.0.14`；Git 标签格式为 `v<版本号>`，`revision` 必须是 40 位十六进制 Git SHA。Fuwu 自身的版本进位序列仍按单数字段处理，例如 `0.0.9` 的下一版本为 `0.1.0`。
 
 `GET /api/releases` 支持可选 `project` 和 `channel` 查询参数，发行记录字段使用实际 JSON 命名：`project_id`、`version`、`channel`、`repository`、`tag`、`revision`、`release_id`、`published_at`、`digest`、`manifest_key`、`status`、`latest`、`objectHeadStatus` 和 `artifacts`。`digest` 是规范化 manifest 字节与 `SHA256SUMS` 文件字节拼接后计算的 SHA256，用于识别完整发行输入；各制品另有独立 `sha256`。
 
@@ -126,11 +127,17 @@ Heyue 的匿名安装契约不依赖独立的 `install.tar.gz` 或 GitHub 下载
 
 ### 远端 Release staging
 
-`GET /api/release-storage/latest?project={id}` 使用项目登记的 GitHub 仓库和系统设置中的全局授权，查询 Release 列表并选择最新的 `draft=false`、`prerelease=false` 版本。服务端读取并校验该 Release 的 `manifest.json`、仓库绑定、版本和标签后，返回 `repository`、`tag`、`version`、`revision`、`releaseId`、`githubReleaseId`、`publishedAt`、资产名和受限的 v1 manifest 字段。响应不包含下载 URL、授权令牌或上游未定义字段；没有正式 Release 时返回 `remote_release_not_found`。该接口只发现和校验元数据，不创建 staging。
+`GET /api/release-storage/latest?project={id}` 使用项目登记的 GitHub 仓库和系统设置中的全局授权，查询 Release 列表并选择最新的 `draft=false`、`prerelease=false` 版本。该只读接口需要 `release.storage.read` 和项目范围。服务端读取并校验该 Release 的 `manifest.json`、仓库绑定、版本和标签后，返回 `repository`、`tag`、`version`、`revision`、`releaseId`、`githubReleaseId`、`publishedAt`、资产名和受限的 v1 manifest 字段。响应不包含下载 URL、授权令牌或上游未定义字段；没有正式 Release 时返回 `remote_release_not_found`。该接口只发现和校验元数据，不创建 staging。
+
+`POST /api/release-storage/sync-latest` 仅接受 `project` 和可选 `channel`（默认为 `stable`），需要 `release.storage.publish` 与项目范围。服务端按登记仓库发现最新正式 GitHub Release；若该版本尚未发布到目标频道且高于当前指针，则自动下载到新建的受保护 staging job，校验 manifest、SHA256SUMS、资产大小和摘要，再走普通 publish 校验并更新 latest 指针。若同一版本和内容已存在则返回 `already_published`；若 Fuwu 当前频道版本较新则返回 `current_newer` 且不降级。相同版本但内容不同会返回 `409 release_conflict`，停止覆盖。响应不包含凭据或下载 URL。该接口是发行管理页的自动同步入口，页面进入时检查，并在打开期间每 5 分钟检查；检查失败不会绕过校验或更新指针。
+
+```json
+{"project":"heyue","channel":"stable"}
+```
 
 `POST /api/release-storage/stage-remote` 支持通过全局 GitHub 授权读取私有或公开 Release；未提供 `project` 时使用匿名公开访问。提供 `project` 时，服务端使用系统设置中的全局令牌，并强制仓库与项目绑定一致。服务端根据仓库和标签读取 GitHub Release 元数据，只接受非 draft、非 prerelease 的版本，并将调用方明确列出的根级资产下载到服务端受保护的 staging job。下载优先使用 GitHub Release asset 的 API 地址 `/repos/{owner}/{repo}/releases/assets/{id}`，并以 `Accept: application/octet-stream` 请求；没有 asset `id` 的兼容元数据才使用经过主机校验的 `browser_download_url`。跨主机重定向只允许 GitHub API 或 GitHub 下载域名，并会移除跨主机转发的授权头。请求必须同时提供待发布的 `manifest`；服务端下载并校验远端 `SHA256SUMS` 与 manifest，之后仍须调用普通 publish 接口。普通 staging 响应只包含 job/status 和 staging 引用；该接口不接受任意 URL、请求体凭据或本机路径，也不会更新 `latest.json`。
 
-将 `latest=true` 与 `project`、`staging_ref` 一起提交时，服务端会在同一个 staging 请求中自动执行上述发现、读取 manifest、下载资产和校验步骤，无需客户端提交 `tag`、`assets` 或 `manifest`。成功响应额外包含脱敏的 `release` 摘要；staging 仍须显式提交普通 publish 任务。
+将 `latest=true` 与 `project`、`staging_ref` 一起提交时，服务端会在同一个 staging 请求中自动执行上述发现、读取 manifest、下载资产和校验步骤，无需客户端提交 `tag`、`assets` 或 `manifest`。成功响应额外包含脱敏的 `release` 摘要；staging 仍须由后续普通 publish 接口提交。发行管理页的自动同步改用 `POST /api/release-storage/sync-latest` 完成 staging 与发布。
 
 ```json
 {

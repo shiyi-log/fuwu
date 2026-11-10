@@ -39,7 +39,8 @@ from .projects import (
 
 
 UTC = dt.timezone.utc
-VERSION_RE = re.compile(r"^(0|[1-9])\.(0|[1-9])\.(0|[1-9])$")
+VERSION_RE = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
+FUWU_VERSION_RE = re.compile(r"^(0|[1-9])\.(0|[1-9])\.(0|[1-9])$")
 REVISION_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 JOB_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
@@ -84,10 +85,11 @@ def validate_version(value: str) -> str:
 def next_version(value: str) -> str:
     """Return the next single-digit SemVer release (0.0.9 -> 0.1.0).
 
-    The release registry intentionally uses one decimal digit per component so
-    release ordering remains explicit in the small initial deployment.
+    Fuwu's own release sequence keeps one decimal digit per component, while
+    hosted projects use the full SemVer range accepted by ``validate_version``.
     """
-    value = validate_version(value)
+    if not isinstance(value, str) or value.startswith("v") or not FUWU_VERSION_RE.fullmatch(value):
+        raise ReleaseError("invalid_version", "Fuwu version format is invalid", 422)
     major, minor, patch = (int(part) for part in value.split("."))
     if patch < 9:
         patch += 1
@@ -1327,6 +1329,88 @@ class ReleaseService:
         """
         result = self._discover_latest_github_release(repository, github_token=github_token)
         return {key: value for key, value in result.items() if not key.startswith("_")}
+
+    def sync_latest_github_release(
+        self,
+        project_id: str,
+        repository: str,
+        channel: str,
+        *,
+        actor: str,
+        request_id: str,
+        github_token: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Publish a newer formal GitHub release through protected staging."""
+        project_id = _project_value(validate_project_id, project_id)
+        repository = _project_value(normalize_repository, repository)
+        channel = validate_channel(channel)
+        registered = self.repository.get_project(project_id)
+        if registered is None:
+            raise ReleaseError("project_not_found", "project was not found", 404)
+        if not registered["active"]:
+            raise ReleaseError("project_inactive", "project is inactive", 403)
+        if registered["repository"].lower() != repository:
+            raise ReleaseError("project_repository_mismatch", "repository does not match registered project", 409)
+        with self._mutation_lock:
+            discovered = self._discover_latest_github_release(repository, github_token=github_token)
+            latest = {key: value for key, value in discovered.items() if not key.startswith("_")}
+            latest["project"] = project_id
+            version = discovered["version"]
+            version_key = tuple(int(part) for part in version.split("."))
+
+            pointer = self.repository.get_latest(project_id, channel)
+            if pointer and tuple(int(part) for part in pointer["version"].split(".")) > version_key:
+                return 200, {"status": "current_newer", "latest": latest, "current": {"version": pointer["version"]}}
+
+            existing = self.repository.get_release(project_id, version, channel)
+            if existing:
+                remote_entries = _asset_entries(discovered["_manifest"].get("assets"))
+                published_entries = _asset_entries(existing["manifest"].get("assets"))
+
+                def signature(entries: list[dict[str, Any]]) -> list[tuple[str, Any, str]]:
+                    return sorted(
+                        (entry["path"], entry.get("size"), str(entry.get("sha256", "")).lower())
+                        for entry in entries
+                    )
+
+                same_release = (
+                    existing["repository"].lower() == repository
+                    and str(existing["release_id"]) == str(discovered["releaseId"])
+                    and existing["tag"] == discovered["tag"]
+                    and existing["revision"] == discovered["revision"]
+                    and signature(remote_entries) == signature(published_entries)
+                )
+                if not same_release:
+                    raise ReleaseError("release_conflict", "same version already has different release content", 409)
+                return 200, {"status": "already_published", "latest": latest, "release": self._public_release(existing)}
+
+            staging_ref = "sync-" + uuid.uuid4().hex
+            self._stage_remote_release(
+                {
+                    "repository": repository,
+                    "tag": discovered["tag"],
+                    "staging_ref": staging_ref,
+                    "assets": discovered["assetNames"],
+                    "manifest": discovered["_manifest"],
+                },
+                actor=actor,
+                request_id=request_id + "-stage",
+                github_token=github_token,
+                project_id=project_id,
+            )
+            _, published = self._publish(
+                {
+                    "project": project_id,
+                    "channel": channel,
+                    "version": version,
+                    "tag": discovered["tag"],
+                    "revision": discovered["revision"],
+                    "staging_ref": staging_ref,
+                },
+                actor=actor,
+                request_id=request_id,
+            )
+            return 201, {"status": "published", "latest": latest, "release": published["release"]}
 
     def _discover_latest_github_release(self, repository: str, *, github_token: str | None = None) -> dict[str, Any]:
         if not isinstance(repository, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository):

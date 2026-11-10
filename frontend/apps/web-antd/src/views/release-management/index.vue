@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import type {
+  LatestGitHubRelease,
   ReleaseAuditRecord,
   ReleaseChannel,
   ReleaseRecord,
   ReleaseStorageStatus,
 } from '#/api/release';
 
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { useRoute } from 'vue-router';
 
 import { useAccess } from '@vben/access';
@@ -35,8 +36,8 @@ import {
   getReleaseStorageStatusApi,
   publishReleaseApi,
   rollbackReleaseApi,
-  stageLatestReleaseApi,
   stageRemoteReleaseApi,
+  syncLatestGitHubReleaseApi,
 } from '#/api';
 
 import { isReleaseConflictError } from '#/api/request-errors';
@@ -44,7 +45,7 @@ import { isStageOutcomeUncertain } from './stage-errors';
 
 const { hasAccessByCodes } = useAccess();
 const route = useRoute();
-const versionPattern = /^[0-9]\.[0-9]\.[0-9]$/;
+const versionPattern = /^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/;
 const stagingRefPattern = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
 
 const loading = ref(false);
@@ -59,6 +60,11 @@ const publishOpen = ref(false);
 const remoteOpen = ref(false);
 const stageRemotePending = ref(false);
 const latestReleasePending = ref(false);
+const latestSyncPending = ref(false);
+const latestRelease = ref<LatestGitHubRelease>();
+const latestSyncState = ref<'already_published' | 'current_newer' | 'error' | 'loading' | 'published' | 'read_only' | 'idle'>('idle');
+const latestSyncError = ref('');
+const latestCheckedAt = ref('');
 const stageContextRevision = ref(0);
 const rollbackOpen = ref(false);
 const selectedRelease = ref<ReleaseRecord>();
@@ -82,6 +88,9 @@ const remoteModel = reactive({ tag: '', staging_ref: '', assets: '', manifest: '
 
 const canPublish = computed(
   () => hasAccessByCodes(['release.storage.publish']),
+);
+const canReadLatest = computed(
+  () => hasAccessByCodes(['release.storage.read']),
 );
 const canRollback = computed(
   () => hasAccessByCodes(['release.storage.rollback']),
@@ -153,6 +162,56 @@ const filteredReleases = computed(() =>
     return projectMatches && channelMatches;
   }),
 );
+const currentChannelLatest = computed(() =>
+  filteredReleases.value.find((item) => item.latest),
+);
+function compareVersions(left: string, right: string) {
+  const leftParts = left.split('.');
+  const rightParts = right.split('.');
+  for (let index = 0; index < Math.max(leftParts.length, rightParts.length); index += 1) {
+    const leftPart = leftParts[index] || '0';
+    const rightPart = rightParts[index] || '0';
+    if (leftPart.length !== rightPart.length) return leftPart.length - rightPart.length;
+    if (leftPart !== rightPart) return leftPart > rightPart ? 1 : -1;
+  }
+  return 0;
+}
+const latestSyncMessage = computed(() => {
+  if (latestSyncState.value === 'loading') return '正在检查 GitHub 正式版…';
+  if (latestSyncState.value === 'error') return latestSyncError.value;
+  if (!latestRelease.value) return '尚未读取上游版本';
+  if (latestSyncState.value === 'published') {
+    return `已自动同步 ${latestRelease.value.tag} 到 ${selectedChannel.value}`;
+  }
+  if (latestSyncState.value === 'current_newer') {
+    return `Fuwu ${latestSyncMessageCurrentVersion.value} 高于 GitHub ${latestRelease.value.version}，已跳过降级`;
+  }
+  if (latestSyncState.value === 'already_published') {
+    return `Fuwu 已包含 GitHub 最新正式版 ${latestRelease.value.tag}`;
+  }
+  if (latestSyncState.value === 'read_only') {
+    const current = currentChannelLatest.value;
+    if (!current) return `GitHub 最新正式版 ${latestRelease.value.tag} 尚未发布到 ${selectedChannel.value}`;
+    const comparison = compareVersions(latestRelease.value.version, current.version);
+    if (comparison > 0) return `发现上游新版本 ${latestRelease.value.tag}，当前 ${selectedChannel.value} 为 ${current.version}`;
+    if (comparison < 0) return `GitHub ${latestRelease.value.version} 低于当前 ${selectedChannel.value} ${current.version}`;
+    return latestRelease.value.revision === current.revision
+      ? `GitHub ${latestRelease.value.tag} 与当前 ${selectedChannel.value} 版本一致`
+      : `GitHub ${latestRelease.value.tag} 与当前版本号相同，但 Revision 不同`;
+  }
+  return '自动检查会在进入页面及定期刷新时运行';
+});
+const latestSyncMessageCurrentVersion = computed(() => currentChannelLatest.value?.version || '当前发行');
+const latestSyncColor = computed(() => {
+  if (latestSyncState.value === 'error') return 'red';
+  if (latestSyncState.value === 'published' || latestSyncState.value === 'already_published') return 'green';
+  if (latestSyncState.value === 'current_newer') return 'orange';
+  if (latestSyncState.value === 'read_only' && latestRelease.value) {
+    const current = currentChannelLatest.value;
+    return current && compareVersions(latestRelease.value.version, current.version) <= 0 ? 'green' : 'orange';
+  }
+  return 'blue';
+});
 const channelOptions = ['stable', 'beta'];
 
 const releaseColumns = [
@@ -258,65 +317,88 @@ async function discoverLatestRelease() {
   }
 }
 
-async function stageLatestRelease() {
-  if (stageRemotePending.value) {
-    publishOpen.value = true;
-    message.warning('当前 staging 结果仍待确认，请先继续提交已有 staging 引用，不要重复下载。');
+function latestRequestError(error: unknown) {
+  const safeError = error as { code?: string; serverCode?: string; status?: number };
+  const messages: Record<string, string> = {
+    github_authorization_required: '未配置 GitHub 授权，无法读取私有仓库 Release。',
+    github_repository_access_denied: 'GitHub 授权账号无权读取项目绑定的仓库。',
+    github_token_invalid: 'GitHub 授权已失效，请在系统设置中重新授权。',
+    github_unavailable: 'GitHub 暂时不可用，稍后会自动重试。',
+    remote_asset_missing: '最新 Release 缺少 manifest 声明的资产。',
+    remote_asset_unavailable: '最新 Release 资产下载失败，稍后会自动重试。',
+    remote_checksum_mismatch: 'Release 资产校验失败，自动发布已停止。',
+    remote_checksums_invalid: 'Release 的 SHA256SUMS 格式无效，自动发布已停止。',
+    remote_checksums_missing: '最新 Release 缺少 SHA256SUMS。',
+    remote_manifest_missing: '最新 Release 缺少 manifest.json。',
+    remote_manifest_unavailable: '最新 Release 的 manifest 暂时无法读取。',
+    remote_release_not_found: '绑定仓库尚无正式 Release。',
+    remote_release_unavailable: 'GitHub Release 信息暂时无法读取，稍后会自动重试。',
+    remote_size_mismatch: 'Release 资产大小校验失败，自动发布已停止。',
+    release_conflict: '同一版本在 Fuwu 中存在不同内容，自动发布已停止。',
+    immutable_object_conflict: '对象存储中已存在不同内容的同版本资产，自动发布已停止。',
+  };
+  if (safeError.serverCode && messages[safeError.serverCode]) {
+    return messages[safeError.serverCode] || '自动读取或发布失败；稍后会自动重试。';
+  }
+  if (safeError.code === 'ECONNABORTED' || safeError.code === 'ETIMEDOUT' || safeError.status === 504) {
+    return '自动同步超时；页面会在下次检查时确认发布状态。';
+  }
+  if (safeError.status === 403) return '当前账号没有读取或发布此项目发行的权限。';
+  if (safeError.status === 502) return 'GitHub 或对象存储暂时不可用，稍后会自动重试。';
+  return '自动读取或发布失败；请检查项目仓库、GitHub 授权和对象存储状态。';
+}
+
+let latestReadRevision = 0;
+let latestRefreshQueued = false;
+let latestPageDisposed = false;
+let latestCheckTimer: ReturnType<typeof setInterval> | undefined;
+async function refreshLatestRelease() {
+  const project = selectedProject.value;
+  if (latestPageDisposed || !project || !canReadLatest.value) return;
+  if (latestSyncPending.value) {
+    latestRefreshQueued = true;
     return;
   }
-  const project = selectedProject.value;
   const channel = selectedChannel.value;
   const contextRevision = stageContextRevision.value;
-  if (!project) {
-    message.warning('当前没有选择项目。');
-    return;
-  }
-  const stagingRef = generatedStagingRef(project, 'latest');
-  latestReleasePending.value = true;
-  let latest: Awaited<ReturnType<typeof getLatestGitHubReleaseApi>> | undefined;
+  const revision = ++latestReadRevision;
+  latestSyncPending.value = true;
+  latestSyncState.value = 'loading';
+  latestSyncError.value = '';
   try {
-    // Resolve metadata first so a browser timeout can still resume publishing
-    // the exact staging job without starting a duplicate download.
-    latest = await getLatestGitHubReleaseApi(project);
-    if (contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
-    const staged = await stageLatestReleaseApi({ project, staging_ref: stagingRef, latest: true });
-    if (contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) {
-      message.warning('项目或频道已切换，已丢弃本次 staging 结果，请在当前项目重新发起操作。');
-      return;
-    }
-    stageRemotePending.value = false;
-    const stagedRelease = staged && typeof staged === 'object' && 'release' in staged
-      ? (staged as { release?: Record<string, unknown> }).release
-      : undefined;
-    const tag = typeof stagedRelease?.tag === 'string' ? stagedRelease.tag : latest.tag;
-    const version = typeof stagedRelease?.version === 'string' ? stagedRelease.version : latest.version;
-    const revision = typeof stagedRelease?.revision === 'string' ? stagedRelease.revision : latest.revision;
-    preparePublishFromManifest(
-      { ...latest.manifest, tag, version, revision },
-      tag,
-      stagingRef,
-      project,
-      channel,
-    );
-    publishOpen.value = true;
-    message.success(`已自动发现并下载最新正式 Release ${latest.tag} 到 staging，请继续提交发布。`);
-  } catch (error) {
-    if (contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
-    if (isStageOutcomeUncertain(error)) {
-      stageRemotePending.value = true;
-      if (latest) {
-        // Metadata was fetched before staging; preserving it lets the operator
-        // continue with publish when the server finished after a browser timeout.
-        preparePublishFromManifest(latest.manifest, latest.tag, stagingRef, project, channel);
+    if (canPublish.value) {
+      const result = await syncLatestGitHubReleaseApi(project, channel);
+      if (revision !== latestReadRevision || contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
+      latestRelease.value = result.latest;
+      latestSyncState.value = result.status;
+      if (result.status === 'published') {
+        message.success(`已自动发布 GitHub ${result.latest.tag} 到 ${channel}`);
       }
-      publishOpen.value = true;
-      message.warning('最新 Release 的 staging 结果暂时无法确认；请稍后直接提交当前 staging 引用，不要重复下载。');
-      return;
+      // A previous request may have completed after a browser timeout. Reload
+      // even when the server now reports that the release is already present.
+      await loadData();
+    } else {
+      const latest = await getLatestGitHubReleaseApi(project);
+      if (revision !== latestReadRevision || contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
+      latestRelease.value = latest;
+      latestSyncState.value = 'read_only';
     }
-    message.error('自动下载最新正式 Release 失败，请确认 GitHub 授权、Release 资产和校验清单。');
+  } catch (error) {
+    if (revision !== latestReadRevision || contextRevision !== stageContextRevision.value || selectedProject.value !== project || selectedChannel.value !== channel) return;
+    latestSyncState.value = 'error';
+    latestSyncError.value = latestRequestError(error);
   } finally {
-    latestReleasePending.value = false;
+    latestSyncPending.value = false;
+    if (revision === latestReadRevision) latestCheckedAt.value = new Date().toISOString();
+    if (latestRefreshQueued && !latestPageDisposed) {
+      latestRefreshQueued = false;
+      setTimeout(() => void refreshLatestRelease(), 0);
+    }
   }
+}
+function refreshPage() {
+  void loadData();
+  void refreshLatestRelease();
 }
 function resetStagingState() {
   remoteOpen.value = false;
@@ -358,7 +440,7 @@ async function submitRemote() {
     message.warning('请填写 Release tag、staging 引用、资产名称和 manifest JSON。');
     return;
   }
-  if (!/^v[0-9]\.[0-9]\.[0-9]$/.test(operationTag) || !stagingRefPattern.test(operationStagingRef)) {
+  if (!/^v(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$/.test(operationTag) || !stagingRefPattern.test(operationStagingRef)) {
     message.warning('Tag 或 staging 引用格式不正确。');
     return;
   }
@@ -419,7 +501,7 @@ async function submitPublish() {
     return;
   }
   if (!versionPattern.test(publishModel.version)) {
-    message.warning('版本须为三段单个数字，例如 0.0.9 后使用 0.1.0，不接受 0.0.10。');
+    message.warning('版本须为无前导零的三段数字，例如 1.0.14。');
     return;
   }
   if (!/^[0-9a-f]{40}$/i.test(publishModel.revision)) {
@@ -484,14 +566,33 @@ async function submitRollback() {
 
 watch([selectedProject, selectedChannel], () => {
   stageContextRevision.value += 1;
+  latestReadRevision += 1;
   publishOpen.value = false;
   rollbackOpen.value = false;
   resetStagingState();
   releases.value = [];
   audits.value = [];
   storage.value = {};
+  latestRelease.value = undefined;
+  latestCheckedAt.value = '';
+  latestSyncError.value = '';
+  latestSyncState.value = canReadLatest.value ? 'loading' : 'idle';
   void loadData();
+  void refreshLatestRelease();
 }, { immediate: true });
+watch(canReadLatest, (allowed) => {
+  if (allowed) void refreshLatestRelease();
+});
+
+onMounted(() => {
+  latestCheckTimer = setInterval(() => void refreshLatestRelease(), 5 * 60 * 1000);
+});
+onUnmounted(() => {
+  latestPageDisposed = true;
+  latestRefreshQueued = false;
+  latestReadRevision += 1;
+  if (latestCheckTimer) clearInterval(latestCheckTimer);
+});
 </script>
 
 <template>
@@ -511,9 +612,9 @@ watch([selectedProject, selectedChannel], () => {
         <Select v-model:value="selectedChannel" style="width: 130px">
           <Select.Option v-for="channel in channelOptions" :key="channel" :value="channel">{{ channel }}</Select.Option>
         </Select>
-        <Button :loading="loading" @click="loadData">刷新</Button>
+        <Button :loading="loading || latestSyncPending" @click="refreshPage">刷新</Button>
       </Space>
-      <Space v-if="canPublish"><Button :loading="latestReleasePending" @click="stageLatestRelease">自动下载并 staging 最新正式 Release</Button><Button @click="showRemoteModal">按 Tag 获取 Release</Button><Button type="primary" @click="showPublishModal">发布版本</Button></Space>
+      <Space v-if="canPublish"><Button @click="showRemoteModal">按 Tag 获取 Release</Button><Button type="primary" @click="showPublishModal">发布版本</Button></Space>
     </div>
 
     <Spin :spinning="loading">
@@ -532,6 +633,22 @@ watch([selectedProject, selectedChannel], () => {
           <div class="mt-1 text-xs text-gray-400">{{ formatDate(item.job?.updatedAt) }}</div>
         </Card>
       </div>
+
+      <Card class="mt-4" title="GitHub 最新正式版">
+        <div class="flex flex-wrap items-center justify-between gap-4">
+          <div class="min-w-0">
+            <div class="flex flex-wrap items-center gap-2">
+              <Tag :color="latestSyncColor">{{ latestSyncState === 'loading' ? '检查中' : latestSyncState === 'error' ? '检查失败' : latestSyncState === 'published' ? '已自动发布' : latestSyncState === 'already_published' ? '已同步' : latestSyncState === 'current_newer' ? '跳过降级' : latestSyncState === 'read_only' ? '已读取' : '未检查' }}</Tag>
+              <span class="font-semibold">{{ latestRelease?.tag || '—' }}</span>
+              <span v-if="latestRelease" class="text-sm text-gray-500">版本 {{ latestRelease.version }}</span>
+            </div>
+            <div class="mt-2 break-all text-sm text-gray-500">{{ latestSyncMessage }}</div>
+            <div v-if="latestRelease" class="mt-1 break-all text-xs text-gray-400">{{ latestRelease.repository }} · {{ latestRelease.revision.slice(0, 12) }} · GitHub 发布时间 {{ formatDate(latestRelease.publishedAt) }}</div>
+            <div class="mt-1 text-xs text-gray-400">最近检查：{{ formatDate(latestCheckedAt) }}</div>
+          </div>
+          <Button :loading="latestSyncPending" :disabled="!canReadLatest" @click="refreshLatestRelease">{{ canPublish ? '立即检查并同步' : '重新读取' }}</Button>
+        </div>
+      </Card>
 
       <Card class="mt-4" title="版本清单">
         <Table :columns="releaseColumns" :data-source="filteredReleases" :pagination="{ pageSize: 10 }" row-key="id" :scroll="{ x: 1100 }" size="small">
@@ -570,7 +687,7 @@ watch([selectedProject, selectedChannel], () => {
       <Form layout="vertical">
         <Form.Item label="当前项目" required><Input :value="publishModel.project" disabled /></Form.Item>
         <Form.Item label="频道"><Select v-model:value="publishModel.channel"><Select.Option value="stable">stable</Select.Option><Select.Option value="beta">beta</Select.Option></Select></Form.Item>
-        <Form.Item label="数字版本" required><Input v-model:value="publishModel.version" pattern="[0-9]\.[0-9]\.[0-9]" placeholder="例如 0.0.1，每段单个数字，9 向左进位" /></Form.Item>
+        <Form.Item label="数字版本" required><Input v-model:value="publishModel.version" pattern="(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)" placeholder="例如 1.0.14" /></Form.Item>
         <Form.Item label="Tag"><Input v-model:value="publishModel.tag" placeholder="可选，默认 v + 数字版本" /></Form.Item>
         <Form.Item label="完整 40 位 Revision" required><Input v-model:value="publishModel.revision" :maxlength="40" placeholder="40 位 commit SHA" /></Form.Item>
         <Form.Item label="受保护 staging 引用" required><Input v-model:value="publishModel.staging_ref" :maxlength="128" placeholder="例如 job-20261020-001" /></Form.Item>

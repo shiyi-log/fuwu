@@ -197,8 +197,16 @@ export interface LatestGitHubRelease {
   version: string;
   revision: string;
   releaseId: number | string;
+  publishedAt?: string | null;
   assets: string[];
   manifest: Record<string, unknown>;
+}
+
+export interface SyncLatestGitHubReleaseResult {
+  status: 'already_published' | 'current_newer' | 'published';
+  latest: LatestGitHubRelease;
+  current?: { version: string };
+  release?: Partial<ReleaseRecord>;
 }
 
 function releaseAssetNames(value: unknown): string[] {
@@ -225,16 +233,7 @@ function releaseAssetNames(value: unknown): string[] {
   });
 }
 
-/**
- * Discover the repository's newest non-draft, non-prerelease GitHub Release.
- * The service resolves GitHub credentials and fetches manifest/checksum
- * metadata server-side; the browser only receives safe release metadata.
- */
-export async function getLatestGitHubReleaseApi(project: string) {
-  const response = await requestClient.get<LatestGitHubRelease | { release?: LatestGitHubRelease }>(
-    '/release-storage/latest',
-    { params: { project }, responseReturn: 'body' },
-  );
+function normalizeLatestGitHubRelease(response: unknown, project: string): LatestGitHubRelease {
   const payload = (response && typeof response === 'object' && 'release' in response
     ? response.release
     : response) as Partial<LatestGitHubRelease> | undefined;
@@ -255,9 +254,23 @@ export async function getLatestGitHubReleaseApi(project: string) {
     version: payload.version,
     revision: payload.revision,
     releaseId: payload.releaseId,
+    publishedAt: typeof payload.publishedAt === 'string' ? payload.publishedAt : null,
     assets: [...new Set(assets)],
     manifest: manifest as Record<string, unknown>,
   } satisfies LatestGitHubRelease;
+}
+
+/**
+ * Discover the repository's newest non-draft, non-prerelease GitHub Release.
+ * The service resolves GitHub credentials and fetches manifest/checksum
+ * metadata server-side; the browser only receives safe release metadata.
+ */
+export async function getLatestGitHubReleaseApi(project: string) {
+  const response = await requestClient.get<unknown>(
+    '/release-storage/latest',
+    { params: { project }, timeout: 70_000, responseReturn: 'body' },
+  );
+  return normalizeLatestGitHubRelease(response, project);
 }
 
 const DEFAULT_STAGE_REMOTE_TIMEOUT_MS = 15 * 60 * 1000;
@@ -294,6 +307,16 @@ export async function stageLatestReleaseApi(payload: StageLatestReleasePayload) 
     timeout: getStageRemoteTimeoutMs(),
     responseReturn: 'body',
   });
+}
+
+/** Discover, stage, verify, and publish a newer formal release on the server. */
+export async function syncLatestGitHubReleaseApi(project: string, channel: ReleaseChannel) {
+  const result = await requestClient.post<Omit<SyncLatestGitHubReleaseResult, 'latest'> & { latest: unknown }>(
+    '/release-storage/sync-latest',
+    { project, channel },
+    { timeout: getStageRemoteTimeoutMs(), responseReturn: 'body' },
+  );
+  return { ...result, latest: normalizeLatestGitHubRelease(result.latest, project) } satisfies SyncLatestGitHubReleaseResult;
 }
 
 export interface RollbackReleasePayload {

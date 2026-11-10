@@ -69,6 +69,16 @@ describe('sanitizeRequestError', () => {
     expect(error).not.toHaveProperty('response');
   });
 
+  it('preserves a bounded upstream release error for automatic sync status', () => {
+    const error = sanitizeRequestError({
+      response: { status: 404, data: { code: 'remote_release_not_found', message: 'private upstream response' } },
+    });
+
+    expect(error.status).toBe(404);
+    expect(error.serverCode).toBe('remote_release_not_found');
+    expect(JSON.stringify(error)).not.toContain('private upstream response');
+  });
+
   it('drops unknown codes and invalid statuses', () => {
     const error = sanitizeRequestError({
       code: 'CUSTOM_SECRET_CODE',

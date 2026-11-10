@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 import urllib.error
@@ -140,6 +141,80 @@ class PublishConsistencyTests(unittest.TestCase):
             repeated_status, repeated = self.service.publish({**request, "channel": "stable"}, actor="acceptance", request_id="stable-promote")
             write.assert_not_called()
         self.assertEqual((repeated_status, repeated), (200, response))
+
+    def test_sync_latest_publishes_new_release_and_skips_repeat_download(self):
+        self.repository.create_project({"id": "fuwu", "name": "Fuwu", "repository": "example-org/fuwu"})
+        source, manifest = self.job("1.0.14")
+        discovery = {
+            "repository": "example-org/fuwu",
+            "tag": "v1.0.14",
+            "version": "1.0.14",
+            "revision": manifest["revision"],
+            "releaseId": manifest["releaseId"],
+            "publishedAt": manifest["publishedAt"],
+            "assetNames": ["asset.tgz"],
+            "manifest": manifest,
+            "_manifest": manifest,
+        }
+
+        def stage(request, **_kwargs):
+            shutil.copytree(source, self.root / request["staging_ref"])
+            return 201, {"status": "staged"}
+
+        with patch.object(self.service, "_discover_latest_github_release", return_value=discovery), \
+             patch.object(self.service, "_stage_remote_release", side_effect=stage) as remote_stage:
+            status, result = self.service.sync_latest_github_release(
+                "fuwu", "example-org/fuwu", "stable", actor="acceptance", request_id="sync-first"
+            )
+            repeated_status, repeated = self.service.sync_latest_github_release(
+                "fuwu", "example-org/fuwu", "stable", actor="acceptance", request_id="sync-repeat"
+            )
+
+        self.assertEqual(status, 201)
+        self.assertEqual(result["status"], "published")
+        self.assertEqual(result["release"]["version"], "1.0.14")
+        self.assertEqual((repeated_status, repeated["status"]), (200, "already_published"))
+        remote_stage.assert_called_once()
+        self.assertEqual(self.repository.get_latest("fuwu", "stable")["version"], "1.0.14")
+
+        changed_manifest = json.loads(json_bytes(manifest))
+        changed_manifest["assets"]["python"]["sha256"] = "b" * 64
+        changed_discovery = {**discovery, "_manifest": changed_manifest}
+        with patch.object(self.service, "_discover_latest_github_release", return_value=changed_discovery), \
+             patch.object(self.service, "_stage_remote_release") as changed_stage:
+            with self.assertRaises(ReleaseError) as error:
+                self.service.sync_latest_github_release(
+                    "fuwu", "example-org/fuwu", "stable", actor="acceptance", request_id="sync-conflict"
+                )
+
+        self.assertEqual((error.exception.code, error.exception.status), ("release_conflict", 409))
+        changed_stage.assert_not_called()
+        self.assertEqual(self.repository.get_latest("fuwu", "stable")["version"], "1.0.14")
+
+    def test_sync_latest_never_downgrades_a_newer_channel_pointer(self):
+        self.repository.create_project({"id": "fuwu", "name": "Fuwu", "repository": "example-org/fuwu"})
+        self.publish("1.0.15")
+        older_manifest = self.job("1.0.14")[1]
+        discovery = {
+            "repository": "example-org/fuwu",
+            "tag": "v1.0.14",
+            "version": "1.0.14",
+            "revision": older_manifest["revision"],
+            "releaseId": older_manifest["releaseId"],
+            "assetNames": ["asset.tgz"],
+            "manifest": older_manifest,
+            "_manifest": older_manifest,
+        }
+        with patch.object(self.service, "_discover_latest_github_release", return_value=discovery), \
+             patch.object(self.service, "_stage_remote_release") as remote_stage:
+            status, result = self.service.sync_latest_github_release(
+                "fuwu", "example-org/fuwu", "stable", actor="acceptance", request_id="sync-older"
+            )
+
+        self.assertEqual((status, result["status"]), (200, "current_newer"))
+        self.assertEqual(result["current"]["version"], "1.0.15")
+        remote_stage.assert_not_called()
+        self.assertEqual(self.repository.get_latest("fuwu", "stable")["version"], "1.0.15")
 
     def test_channel_promotion_rejects_other_manifest_changes_without_overwrite(self):
         job, manifest = self.job()

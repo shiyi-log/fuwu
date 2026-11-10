@@ -5,6 +5,7 @@ import {
   getStageRemoteTimeoutMs,
   stageLatestReleaseApi,
   stageRemoteReleaseApi,
+  syncLatestGitHubReleaseApi,
   type StageRemoteReleasePayload,
 } from './release';
 import { requestClient } from './request';
@@ -37,6 +38,7 @@ describe('getLatestGitHubReleaseApi', () => {
       version: '0.1.1',
       revision: 'a'.repeat(40),
       releaseId: 421_781_368,
+      publishedAt: null,
       assets: ['bark-linux-amd64.tar.gz', 'bark.whl'],
       manifest: {
         schemaVersion: 1,
@@ -48,6 +50,7 @@ describe('getLatestGitHubReleaseApi', () => {
     });
     expect(get).toHaveBeenCalledWith('/release-storage/latest', {
       params: { project: 'bark' },
+      timeout: 70_000,
       responseReturn: 'body',
     });
   });
@@ -75,6 +78,65 @@ describe('getLatestGitHubReleaseApi', () => {
   it('rejects a malformed discovery response', async () => {
     vi.spyOn(requestClient, 'get').mockResolvedValue({ tag: 'v0.1.1', manifest: {} });
     await expect(getLatestGitHubReleaseApi('bark')).rejects.toThrow('latest_release_invalid');
+  });
+});
+
+describe('syncLatestGitHubReleaseApi', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('requests server-side discovery, staging, validation, and publication', async () => {
+    const result = {
+      status: 'published',
+      latest: {
+        repository: 'shiyi-log/fuwu',
+        tag: 'v0.0.2',
+        version: '0.0.2',
+        revision: 'a'.repeat(40),
+        releaseId: 123,
+        publishedAt: '2026-11-10T01:00:00Z',
+        assets: [{ name: 'fuwu.tar.gz', size: 42 }],
+        manifest: { assets: [{ path: 'fuwu.tar.gz' }] },
+      },
+      release: { version: '0.0.2' },
+    };
+    const post = vi.spyOn(requestClient, 'post').mockResolvedValue(result);
+    await expect(syncLatestGitHubReleaseApi('fuwu', 'stable')).resolves.toEqual({
+      ...result,
+      latest: { ...result.latest, project: 'fuwu', assets: ['fuwu.tar.gz'] },
+    });
+    const [url, body, config] = post.mock.calls[0] as [string, Record<string, unknown>, Record<string, any>];
+    expect(url).toBe('/release-storage/sync-latest');
+    expect(body).toEqual({ project: 'fuwu', channel: 'stable' });
+    expect(config.timeout).toBe(900_000);
+  });
+
+  it.each(['already_published', 'current_newer'])('normalizes upstream asset records for %s responses', async (status) => {
+    vi.spyOn(requestClient, 'post').mockResolvedValue({
+      status,
+      latest: {
+        project: 'heyue',
+        repository: 'shiyi-log/heyue',
+        tag: 'v1.0.14',
+        version: '1.0.14',
+        revision: 'b'.repeat(40),
+        releaseId: '456',
+        assets: [{ name: 'heyue.tar.gz', size: 42 }, { name: 'heyue.tar.gz', size: 42 }],
+        manifest: { assets: {} },
+      },
+      current: { version: '1.0.15' },
+    });
+    await expect(syncLatestGitHubReleaseApi('heyue', 'stable')).resolves.toMatchObject({
+      status,
+      latest: { project: 'heyue', assets: ['heyue.tar.gz'], publishedAt: null },
+      current: { version: '1.0.15' },
+    });
+  });
+
+  it('rejects malformed latest metadata returned by synchronization', async () => {
+    vi.spyOn(requestClient, 'post').mockResolvedValue({ status: 'published', latest: { tag: 'v1.0.14' } });
+    await expect(syncLatestGitHubReleaseApi('heyue', 'stable')).rejects.toThrow('latest_release_invalid');
   });
 });
 

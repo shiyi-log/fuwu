@@ -50,7 +50,7 @@ class ManagementApiTests(unittest.TestCase):
         for project in ("alpha", "beta"):
             self.service.create_project({"id": project, "name": project, "repository": "owner/" + project}, actor="user:" + self.admin["id"], request_id="create-" + project)
         self.reader = self.accounts.create_user(self.admin["id"], {"username": "reader", "displayName": "只读", "password": "Strong-Reader-Password-2026",
-            "roles": ["viewer"], "permissions": ["logs.read"], "project_ids": ["alpha"]})
+            "roles": ["viewer"], "permissions": ["logs.read", "release.storage.read"], "project_ids": ["alpha"]})
         self.rbac = RBAC.from_env()
 
     def call(self, method, path, *, token=None, body=None, query=None, request_id="api-test", request_secure=False):
@@ -116,6 +116,37 @@ class ManagementApiTests(unittest.TestCase):
         self.assertEqual(result["tag"], "v0.0.1")
         self.assertEqual(result["repository"], "owner/alpha")
         discover.assert_called_once_with("owner/alpha", github_token="ghs-test-token")
+
+    def test_latest_release_read_uses_read_permission_and_enforces_project_scope(self):
+        token = self.login("reader", "Strong-Reader-Password-2026")
+        discovered = {"repository": "owner/alpha", "tag": "v0.0.1", "version": "0.0.1", "manifest": {}}
+        github_store = type("GithubStore", (), {"get_token": lambda _self: None})()
+        with patch("fuwu_service.api._github_authorizations", return_value=github_store), \
+             patch.object(self.service, "discover_latest_github_release", return_value=discovered) as discover:
+            status, result = self.call("GET", "/api/release-storage/latest", token=token, query={"project": "alpha"})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(result["project"], "alpha")
+        discover.assert_called_once_with("owner/alpha", github_token=None)
+        self.assertEqual(self.call("GET", "/api/release-storage/latest", token=token, query={"project": "beta"})[0], 403)
+        self.assertEqual(self.call("POST", "/api/release-storage/sync-latest", token=token, body={"project": "alpha"})[0], 403)
+
+    def test_sync_latest_endpoint_requires_publish_and_uses_registered_repository(self):
+        token = self.login()
+        result = {"status": "published", "latest": {"tag": "v0.0.2"}, "release": {"version": "0.0.2"}}
+        github_store = type("GithubStore", (), {"get_token": lambda _self: "ghs-test-token"})()
+        with patch("fuwu_service.api._github_authorizations", return_value=github_store), \
+             patch.object(self.service, "sync_latest_github_release", return_value=(201, result)) as sync_latest:
+            status, response = self.call("POST", "/api/release-storage/sync-latest", token=token,
+                                         body={"project": "alpha", "channel": "beta"})
+
+        self.assertEqual((status, response), (201, result))
+        args, kwargs = sync_latest.call_args
+        self.assertEqual(args, ("alpha", "owner/alpha", "beta"))
+        self.assertEqual(kwargs["github_token"], "ghs-test-token")
+        self.assertTrue(kwargs["request_id"].startswith("req-"))
+        self.assertEqual(self.call("POST", "/api/release-storage/sync-latest", token=token,
+                                   body={"project": "alpha", "repository": "attacker/repository"})[0], 422)
 
     def test_project_documentation_reads_registered_public_repository_without_global_github_token(self):
         token = self.login("reader", "Strong-Reader-Password-2026")
