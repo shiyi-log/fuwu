@@ -19,7 +19,7 @@ const permissions = [
 const canGrantFullScope = computed(() => model.roles.includes('superadmin') && userStore.userInfo?.roles?.some((role) => ['super', 'superadmin'].includes(role)));
 const inherited = computed(() => [...new Set(roles.value.filter((role) => model.roles.includes(role.id)).flatMap((role) => role.permissions))]);
 const columns = [
-  { title: '用户名', dataIndex: 'username', key: 'username' }, { title: '显示名称', dataIndex: 'displayName', key: 'displayName' },
+  { title: '邮箱 / 用户名', dataIndex: 'username', key: 'username' }, { title: '显示名称', dataIndex: 'displayName', key: 'displayName' },
   { title: '角色', key: 'roles' }, { title: '项目范围', key: 'projects' }, { title: '状态', key: 'active' }, { title: '操作', key: 'actions' },
 ];
 const roleName = (id: string) => roles.value.find((role) => role.id === id)?.name || id;
@@ -37,12 +37,13 @@ function show(value?: unknown) {
   open.value = true;
 }
 async function save() {
-  if (!model.username.trim() || !model.displayName.trim() || !model.roles.length) { message.warning('请填写用户名、显示名称并至少选择一个角色'); return; }
+  if (!model.username.trim() || !model.displayName.trim() || !model.roles.length) { message.warning('请填写邮箱或用户名、显示名称并至少选择一个角色'); return; }
+  if (model.username.trim().length > 254 || /[\s\u0000-\u001f]/.test(model.username.trim())) { message.warning('邮箱或用户名格式不正确'); return; }
   if (!editing.value && (model.password.length < 12 || model.password.length > 256 || !model.password.trim())) { message.warning('初始密码需为 12–256 个字符'); return; }
   saving.value = true;
   try {
     const fields = { displayName: model.displayName.trim(), active: model.active, roles: [...model.roles], permissions: [...model.permissions], project_ids: model.allProjects && canGrantFullScope.value ? null : [...model.project_ids] };
-    if (editing.value) await updateAccountApi(editing.value.id, fields);
+    if (editing.value) await updateAccountApi(editing.value.id, { ...fields, username: model.username.trim() });
     else await createAccountApi({ ...fields, username: model.username.trim(), password: model.password });
     model.password = ''; open.value = false;
     message.success('账号已保存；角色、权限或范围变更会撤销该账号的已有会话'); await load();
@@ -67,7 +68,7 @@ onMounted(load);
     <Alert v-if="error" :message="error" show-icon type="error" class="mb-4" />
     <Card><div class="mb-4 flex justify-end"><Space><Button :loading="loading" @click="load">刷新</Button><Button type="primary" @click="show()">创建账号</Button></Space></div><Table :columns="columns" :data-source="records" :loading="loading" row-key="id" :scroll="{ x: 950 }" :pagination="{ pageSize: 20 }"><template #bodyCell="{ column, record }"><template v-if="column.key === 'roles'"><Tag v-for="role in record.roles" :key="role">{{ roleName(role) }}</Tag></template><template v-else-if="column.key === 'projects'"><Tag v-if="record.project_ids === null" color="blue">全部项目</Tag><span v-else-if="!record.project_ids.length">无项目授权</span><Tag v-for="id in record.project_ids || []" v-else :key="id">{{ projectName(id) }}</Tag></template><Tag v-else-if="column.key === 'active'" :color="record.active ? 'green' : 'default'">{{ record.active ? '启用' : '停用' }}</Tag><template v-else-if="column.key === 'actions'"><Space><Button type="link" @click="show(record)">编辑</Button><Button type="link" @click="showReset(record)">重置密码</Button></Space></template></template></Table></Card>
     <Modal v-model:open="open" :title="editing ? '编辑账号' : '创建账号'" :confirm-loading="saving" ok-text="保存账号" @ok="save" @after-close="model.password = ''">
-      <Form layout="vertical"><Form.Item label="用户名" required><Input v-model:value="model.username" :disabled="!!editing" autocomplete="off" :maxlength="80" /></Form.Item><Form.Item label="显示名称" required><Input v-model:value="model.displayName" :maxlength="120" /></Form.Item><Form.Item v-if="!editing" label="初始密码" required><Input.Password v-model:value="model.password" autocomplete="new-password" :maxlength="256" placeholder="至少 12 个字符" /></Form.Item><Form.Item label="角色" required><Select v-model:value="model.roles" mode="multiple" :options="roles.map((role) => ({ value: role.id, label: role.name }))" /></Form.Item><div class="mb-4 text-xs text-gray-500">角色自带权限：{{ inherited.join('、') || '无' }}</div><Form.Item label="额外授权"><Select v-model:value="model.permissions" mode="multiple" :options="permissions" placeholder="只配置角色之外的额外权限" /></Form.Item><Form.Item label="项目范围"><Checkbox v-if="canGrantFullScope" v-model:checked="model.allProjects" class="mb-3">全部项目（仅超级管理员）</Checkbox><Select v-if="!model.allProjects" v-model:value="model.project_ids" mode="multiple" :options="projects.map((project) => ({ value: project.id, label: project.name }))" placeholder="未选择项目表示没有项目访问权" /></Form.Item><Form.Item label="启用账号"><Switch v-model:checked="model.active" /></Form.Item><Alert message="修改角色、权限、项目范围或启用状态会撤销该账号的所有现有会话。" type="info" show-icon /></Form>
+      <Form layout="vertical"><Form.Item label="邮箱 / 用户名" required><Input v-model:value="model.username" autocomplete="username" :maxlength="254" placeholder="建议使用邮箱地址；旧用户名仍可保留" /></Form.Item><Form.Item label="显示名称" required><Input v-model:value="model.displayName" :maxlength="120" /></Form.Item><Form.Item v-if="!editing" label="初始密码" required><Input.Password v-model:value="model.password" autocomplete="new-password" :maxlength="256" placeholder="至少 12 个字符" /></Form.Item><Form.Item label="角色" required><Select v-model:value="model.roles" mode="multiple" :options="roles.map((role) => ({ value: role.id, label: role.name }))" /></Form.Item><div class="mb-4 text-xs text-gray-500">角色自带权限：{{ inherited.join('、') || '无' }}</div><Form.Item label="额外授权"><Select v-model:value="model.permissions" mode="multiple" :options="permissions" placeholder="只配置角色之外的额外权限" /></Form.Item><Form.Item label="项目范围"><Checkbox v-if="canGrantFullScope" v-model:checked="model.allProjects" class="mb-3">全部项目（仅超级管理员）</Checkbox><Select v-if="!model.allProjects" v-model:value="model.project_ids" mode="multiple" :options="projects.map((project) => ({ value: project.id, label: project.name }))" placeholder="未选择项目表示没有项目访问权" /></Form.Item><Form.Item label="启用账号"><Switch v-model:checked="model.active" /></Form.Item><Alert message="修改邮箱、角色、权限、项目范围或启用状态会撤销该账号的所有现有会话。" type="info" show-icon /></Form>
     </Modal>
     <Modal v-model:open="resetOpen" title="重置密码" :confirm-loading="saving" ok-text="确认重置" @ok="reset" @after-close="resetPassword = ''"><Alert :message="`为 ${resetTarget?.username || ''} 设置新密码，保存后撤销其全部会话。`" show-icon type="warning" class="mb-4" /><Input.Password v-model:value="resetPassword" autocomplete="new-password" :maxlength="256" placeholder="12–256 个字符" /></Modal>
   </Page>

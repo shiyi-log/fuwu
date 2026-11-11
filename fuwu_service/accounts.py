@@ -15,14 +15,19 @@ import os
 import re
 import secrets
 import sqlite3
+import sys
 import threading
 import time
 import uuid
+import warnings
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Mapping
 
 from django.contrib.auth.hashers import PBKDF2PasswordHasher
+from django.core.exceptions import ValidationError
+from django.core.validators import validate_email
+from django.conf import settings
 
 from .core import ReleaseError
 from .projects import ProjectInputError, validate_project_id
@@ -45,6 +50,11 @@ LOGIN_LOCK_SECONDS = 300
 LOGIN_MAX_FAILURES = 5
 CLIENT_MAX_FAILURES = 20
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{2,63}$")
+RESET_CODE_LIFETIME_SECONDS = 600
+RESET_CODE_COOLDOWN_SECONDS = 60
+RESET_CODE_MAX_PER_HOUR = 3
+RESET_CODE_MAX_ATTEMPTS = 5
+RESET_LIMIT_ROW_CAPACITY = 10000
 _LOCKS: dict[str, Any] = {}
 _LOCKS_GUARD = threading.Lock()
 _DUMMY_HASH: str | None = None
@@ -93,12 +103,21 @@ def account_store() -> "AccountStore":
 
 
 class AccountStore:
-    def __init__(self, database: str | Path | None = None):
+    def __init__(self, database: str | Path | None = None, *, existing_only: bool = False):
         self.database = str(database if database is not None else os.environ.get("FUWU_DATABASE", "fuwu.sqlite3"))
         lock_key = str(Path(self.database).resolve()) if self.database != ":memory:" else uuid.uuid4().hex
         with _LOCKS_GUARD:
             self._lock = _LOCKS.setdefault(lock_key, threading.RLock())
-        self.conn = sqlite3.connect(self.database, check_same_thread=False, timeout=30, isolation_level=None)
+        if existing_only:
+            # Recovery must never create a database at a mistyped path, or
+            # initialize account tables in an unrelated SQLite database.
+            uri = Path(self.database).resolve().as_uri() + "?mode=rw"
+            self.conn = sqlite3.connect(uri, uri=True, check_same_thread=False, timeout=30, isolation_level=None)
+            if not self.conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='account_users'").fetchone():
+                self.conn.close()
+                raise ReleaseError("account_database_required", "an initialized account database is required", 400)
+        else:
+            self.conn = sqlite3.connect(self.database, check_same_thread=False, timeout=30, isolation_level=None)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
         self.conn.execute("PRAGMA busy_timeout=30000")
@@ -141,6 +160,20 @@ class AccountStore:
             self.conn.execute("""CREATE TABLE IF NOT EXISTS account_login_attempts (
                 scope_hash TEXT PRIMARY KEY, window_start INTEGER NOT NULL,
                 failures INTEGER NOT NULL, blocked_until INTEGER NOT NULL)""")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS account_password_reset_codes (
+                email_hash TEXT PRIMARY KEY, challenge_id TEXT NOT NULL,
+                user_id TEXT NOT NULL REFERENCES account_users(id) ON DELETE CASCADE,
+                code_hash TEXT NOT NULL, created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL, attempts INTEGER NOT NULL DEFAULT 0,
+                consumed_at INTEGER)""")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS account_password_reset_limits (
+                scope_hash TEXT PRIMARY KEY, window_start INTEGER NOT NULL,
+                sent_count INTEGER NOT NULL, last_sent_at INTEGER NOT NULL)""")
+            self.conn.execute("CREATE INDEX IF NOT EXISTS account_password_reset_limits_window ON account_password_reset_limits(window_start)")
+            self.conn.execute("""CREATE TABLE IF NOT EXISTS account_security_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
+                action TEXT NOT NULL, actor TEXT NOT NULL, user_id TEXT,
+                outcome TEXT NOT NULL)""")
             self.conn.execute("INSERT OR IGNORE INTO account_schema_migrations VALUES (1,?)", (_timestamp(),))
 
     @staticmethod
@@ -181,9 +214,11 @@ class AccountStore:
             raise _invalid()
         current = current or {}
         username = payload.get("username", current.get("username"))
-        if not isinstance(username, str) or not USERNAME_RE.fullmatch(username.strip().casefold()):
+        if not isinstance(username, str):
             raise _invalid()
         username = username.strip().casefold()
+        if not USERNAME_RE.fullmatch(username) and not AccountStore._valid_email(username):
+            raise _invalid()
         display_name = payload.get("displayName", current.get("displayName", username))
         if not isinstance(display_name, str) or not display_name.strip() or len(display_name) > 100 or any(ord(ch) < 32 for ch in display_name):
             raise _invalid()
@@ -210,6 +245,173 @@ class AccountStore:
         return {"username": username, "displayName": display_name.strip(), "active": active,
                 "roles": sorted(set(roles)), "directPermissions": sorted(set(direct)),
                 "project_ids": None if projects is None else sorted(set(projects))}
+
+    @staticmethod
+    def _valid_email(value: str) -> bool:
+        if not isinstance(value, str) or len(value) > 254:
+            return False
+        try:
+            validate_email(value)
+        except ValidationError:
+            return False
+        return True
+
+    @staticmethod
+    def _reset_secret() -> bytes:
+        secret = settings.SECRET_KEY
+        if not isinstance(secret, str) or len(secret) < 16 or secret in {
+            "fuwu-local-development-key", "change-this-for-local-use",
+        }:
+            raise ReleaseError("email_reset_unavailable", "password reset is unavailable", 503)
+        return secret.encode("utf-8")
+
+    @staticmethod
+    def _reset_digest(value: str, secret: bytes) -> str:
+        return hmac.new(secret, value.encode("utf-8"), hashlib.sha256).hexdigest()
+
+    def set_superadmin_email(self, current_username: str, email: str) -> dict[str, Any]:
+        """Move the sole active superadmin login name to a verified-capable email.
+
+        This host-only recovery operation intentionally does not need the lost
+        account password. Access to the production account database is its
+        authorization boundary; the action is recorded without either address.
+        """
+        if not isinstance(current_username, str) or not isinstance(email, str):
+            raise _invalid()
+        current_username = current_username.strip().casefold()
+        email = email.strip().casefold()
+        if not current_username or not self._valid_email(email):
+            raise _invalid()
+        with self._transaction():
+            row = self.conn.execute("SELECT * FROM account_users WHERE username=?", (current_username,)).fetchone()
+            if row is None or not row["active"] or "superadmin" not in json.loads(row["roles_json"]):
+                raise ReleaseError("superadmin_not_found", "active superadmin was not found", 404)
+            if self.conn.execute("SELECT 1 FROM account_users WHERE username=? AND id<>?", (email, row["id"])).fetchone():
+                raise ReleaseError("username_exists", "username already exists", 409)
+            try:
+                self.conn.execute("UPDATE account_users SET username=?,updated_at=? WHERE id=?", (email, _timestamp(), row["id"]))
+            except sqlite3.IntegrityError:
+                raise ReleaseError("username_exists", "username already exists", 409) from None
+            self._revoke(row["id"])
+            self.conn.execute("DELETE FROM account_password_reset_codes WHERE user_id=?", (row["id"],))
+            self.conn.execute("INSERT INTO account_security_events(created_at,action,actor,user_id,outcome) VALUES (?,?,?,?,?)",
+                (_timestamp(), "superadmin_email_set", "host-cli", row["id"], "success"))
+            return self._public(self._row(row["id"]))
+
+    def create_password_reset_code(self, email: str) -> tuple[str, str, str] | None:
+        """Create a short-lived code and apply per-email throttles.
+
+        The caller sends the returned code only when a matching active account
+        exists. Unknown addresses and throttled requests return the same value.
+        """
+        if not isinstance(email, str):
+            return None
+        email = email.strip().casefold()
+        if not self._valid_email(email):
+            return None
+        secret = self._reset_secret()
+        email_hash = self._reset_digest("email:" + email, secret)
+        now = int(time.time())
+        with self._transaction():
+            self.conn.execute("DELETE FROM account_password_reset_limits WHERE window_start<?", (now - 3600,))
+            self.conn.execute("DELETE FROM account_password_reset_codes WHERE expires_at<=?", (now,))
+            user = self.conn.execute("SELECT id FROM account_users WHERE username=? AND active=1", (email,)).fetchone()
+            if user is None:
+                return None
+            scope_hash = self._reset_digest("email:" + email_hash, secret)
+            row = self.conn.execute("SELECT * FROM account_password_reset_limits WHERE scope_hash=?", (scope_hash,)).fetchone()
+            if row and now - row["window_start"] < 3600:
+                if now - row["last_sent_at"] < RESET_CODE_COOLDOWN_SECONDS or row["sent_count"] >= RESET_CODE_MAX_PER_HOUR:
+                    return None
+            elif self.conn.execute("SELECT COUNT(*) FROM account_password_reset_limits").fetchone()[0] >= RESET_LIMIT_ROW_CAPACITY:
+                return None
+            if row and now - row["window_start"] < 3600:
+                self.conn.execute("UPDATE account_password_reset_limits SET sent_count=sent_count+1,last_sent_at=? WHERE scope_hash=?", (now, scope_hash))
+            else:
+                self.conn.execute("INSERT OR REPLACE INTO account_password_reset_limits VALUES (?,?,?,?)", (scope_hash, now, 1, now))
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            challenge_id = secrets.token_urlsafe(24)
+            code_hash = self._reset_digest("code:" + email_hash + ":" + code, secret)
+            self.conn.execute("INSERT OR REPLACE INTO account_password_reset_codes VALUES (?,?,?,?,?,?,0,NULL)",
+                (email_hash, challenge_id, user["id"], code_hash, now, now + RESET_CODE_LIFETIME_SECONDS))
+            self.conn.execute("INSERT INTO account_security_events(created_at,action,actor,user_id,outcome) VALUES (?,?,?,?,?)",
+                (_timestamp(), "password_reset_code_requested", "anonymous", user["id"], "issued"))
+            return email, code, challenge_id
+
+    def discard_password_reset_code(self, email: str, challenge_id: str) -> None:
+        if not isinstance(email, str) or not isinstance(challenge_id, str):
+            return
+        secret = self._reset_secret()
+        email_hash = self._reset_digest("email:" + email.strip().casefold(), secret)
+        with self._transaction():
+            self.conn.execute("DELETE FROM account_password_reset_codes WHERE email_hash=? AND challenge_id=?", (email_hash, challenge_id))
+
+    def reset_password_with_code(self, email: str, code: str, password: str) -> None:
+        if not isinstance(email, str) or not self._valid_email(email.strip().casefold()) or not isinstance(code, str) or not re.fullmatch(r"[0-9]{6}", code):
+            raise ReleaseError("invalid_reset_code", "verification code is invalid or expired", 400)
+        email = email.strip().casefold()
+        secret = self._reset_secret()
+        email_hash = self._reset_digest("email:" + email, secret)
+        supplied_hash = self._reset_digest("code:" + email_hash + ":" + code, secret)
+        now = int(time.time())
+        claim_time = now
+        invalid = False
+        user_id = None
+        challenge_id = None
+        with self._transaction():
+            challenge = self.conn.execute("SELECT * FROM account_password_reset_codes WHERE email_hash=?", (email_hash,)).fetchone()
+            if challenge is None or challenge["consumed_at"] is not None or challenge["expires_at"] <= now or challenge["attempts"] >= RESET_CODE_MAX_ATTEMPTS:
+                invalid = True
+            elif not hmac.compare_digest(challenge["code_hash"], supplied_hash):
+                attempts = challenge["attempts"] + 1
+                if attempts >= RESET_CODE_MAX_ATTEMPTS:
+                    self.conn.execute("DELETE FROM account_password_reset_codes WHERE email_hash=?", (email_hash,))
+                else:
+                    self.conn.execute("UPDATE account_password_reset_codes SET attempts=? WHERE email_hash=?", (attempts, email_hash))
+                self.conn.execute("INSERT INTO account_security_events(created_at,action,actor,user_id,outcome) VALUES (?,?,?,?,?)",
+                    (_timestamp(), "password_reset_attempt", "anonymous", challenge["user_id"], "rejected"))
+                invalid = True
+            else:
+                user = self.conn.execute("SELECT * FROM account_users WHERE id=? AND username=? AND active=1", (challenge["user_id"], email)).fetchone()
+                if user is None:
+                    self.conn.execute("DELETE FROM account_password_reset_codes WHERE email_hash=?", (email_hash,))
+                    invalid = True
+                else:
+                    claimed = self.conn.execute("UPDATE account_password_reset_codes SET consumed_at=? WHERE email_hash=? AND consumed_at IS NULL", (claim_time, email_hash))
+                    if claimed.rowcount != 1:
+                        invalid = True
+                    else:
+                        user_id = user["id"]
+                        challenge_id = challenge["challenge_id"]
+        if invalid:
+            raise ReleaseError("invalid_reset_code", "verification code is invalid or expired", 400)
+
+        try:
+            password_hash = self._password(password)
+        except BaseException:
+            with self._transaction():
+                self.conn.execute("UPDATE account_password_reset_codes SET consumed_at=NULL WHERE email_hash=? AND challenge_id=? AND consumed_at=?",
+                    (email_hash, challenge_id, claim_time))
+            raise
+        now = int(time.time())
+        invalid = False
+        with self._transaction():
+            challenge = self.conn.execute("SELECT * FROM account_password_reset_codes WHERE email_hash=?", (email_hash,)).fetchone()
+            if challenge is None or challenge["challenge_id"] != challenge_id or challenge["user_id"] != user_id or challenge["consumed_at"] != claim_time or challenge["expires_at"] <= now or challenge["attempts"] >= RESET_CODE_MAX_ATTEMPTS or not hmac.compare_digest(challenge["code_hash"], supplied_hash):
+                invalid = True
+            else:
+                user = self.conn.execute("SELECT * FROM account_users WHERE id=? AND username=? AND active=1", (user_id, email)).fetchone()
+                if user is None:
+                    self.conn.execute("DELETE FROM account_password_reset_codes WHERE email_hash=?", (email_hash,))
+                    invalid = True
+                else:
+                    self.conn.execute("UPDATE account_users SET password_hash=?,updated_at=? WHERE id=?", (password_hash, _timestamp(), user["id"]))
+                    self._revoke(user["id"])
+                    self.conn.execute("DELETE FROM account_password_reset_codes WHERE user_id=?", (user["id"],))
+                    self.conn.execute("INSERT INTO account_security_events(created_at,action,actor,user_id,outcome) VALUES (?,?,?,?,?)",
+                        (_timestamp(), "password_reset_completed", "anonymous", user["id"], "success"))
+        if invalid:
+            raise ReleaseError("invalid_reset_code", "verification code is invalid or expired", 400)
 
     def _manager(self, actor_id: str) -> dict[str, Any]:
         try:
@@ -307,6 +509,8 @@ class AccountStore:
                 raise ReleaseError("username_exists", "username already exists", 409) from None
             if any(fields[key] != current[key] for key in ("username", "active", "roles", "directPermissions", "project_ids")):
                 self._revoke(current["id"])
+            if fields["username"] != current["username"] or not fields["active"]:
+                self.conn.execute("DELETE FROM account_password_reset_codes WHERE user_id=?", (current["id"],))
             return self._public(self._row(current["id"]))
 
     def delete_user(self, actor_id: str, user_id: str) -> None:
@@ -327,6 +531,9 @@ class AccountStore:
             self._may_manage(actor, current, current)
             self.conn.execute("UPDATE account_users SET password_hash=?,updated_at=? WHERE id=?", (password_hash, _timestamp(), current["id"]))
             self._revoke(current["id"])
+            self.conn.execute("DELETE FROM account_password_reset_codes WHERE user_id=?", (current["id"],))
+            self.conn.execute("INSERT INTO account_security_events(created_at,action,actor,user_id,outcome) VALUES (?,?,?,?,?)",
+                (_timestamp(), "password_reset_completed", actor_id, current["id"], "admin_reset"))
 
     def change_password(self, user_id: str, current_password: str, new_password: str) -> None:
         password_hash = self._password(new_password)
@@ -336,6 +543,31 @@ class AccountStore:
                 raise _unauthorized()
             self.conn.execute("UPDATE account_users SET password_hash=?,updated_at=? WHERE id=?", (password_hash, _timestamp(), row["id"]))
             self._revoke(row["id"])
+            self.conn.execute("DELETE FROM account_password_reset_codes WHERE user_id=?", (row["id"],))
+            self.conn.execute("INSERT INTO account_security_events(created_at,action,actor,user_id,outcome) VALUES (?,?,?,?,?)",
+                (_timestamp(), "password_changed", row["id"], row["id"], "success"))
+
+    def reset_password_from_host(self, username: str, password: str, *, expected_user_id: str) -> None:
+        """Recover an active account using host access, never an HTTP route.
+
+        Authorization is the operator's write access to the account database.
+        This does not grant roles or reactivate disabled accounts.
+        """
+        if not isinstance(username, str) or not username.strip() or len(username) > 254:
+            raise _invalid()
+        username = username.strip().casefold()
+        password_hash = self._password(password)
+        with self._transaction():
+            row = self.conn.execute("SELECT id FROM account_users WHERE username=? AND active=1", (username,)).fetchone()
+            if row is None or row["id"] != expected_user_id:
+                raise ReleaseError("active_account_not_found", "active account was not found", 404)
+            self.conn.execute("UPDATE account_users SET password_hash=?,updated_at=? WHERE id=?", (password_hash, _timestamp(), row["id"]))
+            self._revoke(row["id"])
+            self.conn.execute("DELETE FROM account_password_reset_codes WHERE user_id=?", (row["id"],))
+            account_scope, _ = self._login_scopes(username, "host-cli")
+            self.conn.execute("DELETE FROM account_login_attempts WHERE scope_hash=?", (account_scope,))
+            self.conn.execute("INSERT INTO account_security_events(created_at,action,actor,user_id,outcome) VALUES (?,?,?,?,?)",
+                (_timestamp(), "password_reset_completed", "host-cli", row["id"], "host_reset"))
 
     @staticmethod
     def _login_scopes(username: str, client_id: str) -> tuple[str, str]:
@@ -357,7 +589,7 @@ class AccountStore:
             self.conn.execute("INSERT OR REPLACE INTO account_login_attempts VALUES (?,?,?,?)", (scope, window_start, failures, blocked_until))
 
     def login(self, username: str, password: str, *, client_id: str = "local") -> dict[str, Any]:
-        if not isinstance(username, str) or not isinstance(password, str) or len(username) > 64 or len(password) > PASSWORD_MAX_LENGTH:
+        if not isinstance(username, str) or not isinstance(password, str) or len(username) > 254 or len(password) > PASSWORD_MAX_LENGTH:
             raise _unauthorized()
         username = username.strip().casefold()
         now, scopes = int(time.time()), self._login_scopes(username, client_id)
@@ -436,15 +668,53 @@ def main(argv: list[str] | None = None) -> int:
             # argparse's default error may echo an unsupported password value.
             super().error("unsupported command or arguments")
 
-    parser = SafeArgumentParser(description="fuwu 账号初始化工具（不接收明文密码参数）")
-    parser.add_argument("command", choices=["bootstrap", "bootstrap-config"])
+    parser = SafeArgumentParser(description="fuwu 账号维护工具（不接收明文密码参数）")
+    parser.add_argument("command", choices=["bootstrap", "bootstrap-config", "set-superadmin-email", "reset-password"])
     parser.add_argument("--database", default=None, help="账号与发行共用的 SQLite 文件")
     parser.add_argument("--config", default=None, help="项目根目录配置文件（bootstrap-config 使用）")
+    parser.add_argument("--username", default=None, help="要重置密码的邮箱或用户名（reset-password 使用，省略则交互输入）")
     args = parser.parse_args(argv)
+    if args.username is not None and args.command != "reset-password":
+        parser.error("unsupported arguments")
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
     try:
-        if args.command == "bootstrap-config":
+        if args.command == "reset-password":
+            database = args.database or os.environ.get("FUWU_DATABASE")
+            if not database or database == ":memory:":
+                print("操作失败：请用 --database 或 FUWU_DATABASE 指定现有账号数据库")
+                return 1
+            if not sys.stdin.isatty():
+                print("操作失败：请在交互终端运行，以隐藏输入新密码")
+                return 1
+            with AccountStore(database, existing_only=True) as store:
+                username = (args.username if args.username is not None else input("要重置的邮箱或用户名：")).strip().casefold()
+                with store._lock:
+                    row = store.conn.execute("SELECT id FROM account_users WHERE username=? AND active=1", (username,)).fetchone()
+                if row is None:
+                    raise ReleaseError("active_account_not_found", "active account was not found", 404)
+                print("即将重置账号：" + username)
+                with warnings.catch_warnings():
+                    warnings.simplefilter("error", getpass.GetPassWarning)
+                    password = getpass.getpass("新密码（12 至 256 字符，不显示）：")
+                    confirmation = getpass.getpass("再次输入新密码（不显示）：")
+                if not hmac.compare_digest(password.encode(), confirmation.encode()):
+                    print("操作失败：两次密码不一致，密码未修改")
+                    return 1
+                store.reset_password_from_host(username, password, expected_user_id=row["id"])
+            print("密码已修改；该账号的现有会话和找回验证码已撤销，请使用新密码登录。")
+        elif args.command == "bootstrap-config":
             from .runtime_config import bootstrap_from_config
             bootstrap_from_config(args.database, config=args.config)
+        elif args.command == "set-superadmin-email":
+            username = input("当前超级管理员用户名：").strip()
+            email = input("新的超级管理员邮箱：").strip()
+            confirmation = input("再次输入邮箱：").strip()
+            if not hmac.compare_digest(email.casefold().encode(), confirmation.casefold().encode()):
+                print("操作失败：两次邮箱不一致")
+                return 1
+            with AccountStore(args.database) as store:
+                store.set_superadmin_email(username, email)
+            print("超级管理员登录名已设为邮箱；下一步可在登录页请求密码重置验证码。")
         else:
             username = input("首个超级管理员用户名：").strip()
             display_name = input("显示名称（留空使用用户名）：").strip()
@@ -455,13 +725,17 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             with AccountStore(args.database) as store:
                 store.bootstrap_superadmin(username, password, display_name)
-        print("首个超级管理员已创建；请通过账号密码登录。")
+        if args.command in {"bootstrap", "bootstrap-config"}:
+            print("首个超级管理员已创建；请通过账号密码登录。")
         return 0
     except (ReleaseError, EOFError, KeyboardInterrupt) as error:
-        print("初始化失败：" + (error.message if isinstance(error, ReleaseError) else "交互已取消"))
+        print("操作失败：" + (error.message if isinstance(error, ReleaseError) else "交互已取消"))
+        return 1
+    except getpass.GetPassWarning:
+        print("操作失败：终端无法隐藏密码输入，请在交互终端重试")
         return 1
     except (sqlite3.Error, OSError):
-        print("初始化失败：账号存储不可用")
+        print("操作失败：账号存储不可用，请核对现有数据库路径与权限")
         return 1
 
 

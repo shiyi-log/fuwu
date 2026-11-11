@@ -1,6 +1,6 @@
 services:
   api:
-    image: fuwu-api:${FUWU_IMAGE_TAG:-0.0.5}
+    image: fuwu-api:${FUWU_IMAGE_TAG:-0.1.0}
     build:
       context: .
       dockerfile: Dockerfile
@@ -21,6 +21,14 @@ services:
       FUWU_AUTH_TOKENS: ${FUWU_AUTH_TOKENS:-{}}
       FUWU_GITHUB_CREDENTIALS_FILE: ${FUWU_GITHUB_CREDENTIALS_FILE:-/data/private/github_accounts.json}
       FUWU_ALLOW_ROLLBACK_NON_SUPERADMIN: ${FUWU_ALLOW_ROLLBACK_NON_SUPERADMIN:-0}
+      FUWU_TRUST_X_FORWARDED_PROTO: ${FUWU_TRUST_X_FORWARDED_PROTO:-0}
+      EMAIL_HOST: ${EMAIL_HOST:-}
+      EMAIL_PORT: ${EMAIL_PORT:-587}
+      EMAIL_HOST_USER: ${EMAIL_HOST_USER:-}
+      EMAIL_HOST_PASSWORD: ${EMAIL_HOST_PASSWORD:-}
+      EMAIL_USE_TLS: ${EMAIL_USE_TLS:-true}
+      EMAIL_USE_SSL: ${EMAIL_USE_SSL:-false}
+      DEFAULT_FROM_EMAIL: ${DEFAULT_FROM_EMAIL:-}
     ports:
       - "${FUWU_PORT:-8000}:8000"
     volumes:
@@ -38,7 +46,7 @@ services:
       retries: 10
 
   frontend:
-    image: fuwu-frontend:${FUWU_IMAGE_TAG:-0.0.5}
+    image: fuwu-frontend:${FUWU_IMAGE_TAG:-0.1.0}
     build:
       context: ./frontend
       dockerfile: Dockerfile

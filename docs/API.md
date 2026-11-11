@@ -4,7 +4,7 @@
 
 ## 通用约定
 
-- 除健康检查和登录外，管理接口需要 `Authorization: Bearer <会话>`。
+- 除健康检查、登录和邮件验证码找回密码接口外，管理接口需要 `Authorization: Bearer <会话>`。
 - JSON 请求体必须为对象，最大 65,536 字节。响应设置 `Cache-Control: no-store`。
 - `requestId` 依次取 `Idempotency-Key`、`X-Request-ID`、请求体 `requestId`；未提供时由服务生成。对象存储设置、GitHub 授权及检查、远端 staging、自动同步接口始终由服务生成 request ID，避免凭据或调用方提供的重复标识进入敏感操作的审计和幂等范围。
 - request ID 长度为 1 至 128 个 ASCII 字母、数字、点、下划线或连字符，且首字符为字母或数字；不符合格式时服务会生成新值。
@@ -39,6 +39,8 @@
 | --- | --- | --- | --- |
 | `GET` | `/healthz` | 公开 | 200 |
 | `POST` | `/api/auth/login` | 公开；有效账号密码 | 200 |
+| `POST` | `/api/auth/password-reset/code` | 公开；登记邮箱 | 200；无论邮箱是否存在都返回相同响应 |
+| `POST` | `/api/auth/password-reset` | 公开；有效邮箱验证码 | 200 |
 | `POST` | `/api/auth/logout` | 已登录 | 200 |
 | `GET` | `/api/auth/codes` | 已登录 | 200 |
 | `POST` | `/api/auth/password` | 当前账号密码 | 200 |
@@ -74,7 +76,11 @@
 
 首次管理员必须在服务所在机器通过 `bootstrap-config`（从环境变量读取密码）或交互命令创建，详见[部署说明](DEPLOYMENT.md)。根目录配置文件只提供非敏感用户名和密码环境变量名；服务不提供默认密码。登录成功响应包含 `accessToken`、`expiresAt` 和公开用户资料；会话有效期为一小时，服务仅持久化会话摘要。密码以 PBKDF2 哈希保存。
 
-用户名为小写的 3 至 64 位字母、数字、点、下划线或连字符，首位必须为字母或数字。密码长度为 12 至 256 个字符且不能全为空白。未知账号、错误密码、停用账号和登录限速统一返回 `401 unauthorized`。
+用户名可以是小写邮箱地址，也为兼容既有账号继续接受小写的 3 至 64 位字母、数字、点、下划线或连字符（首位必须为字母或数字）。新建账号建议直接使用可收信邮箱作为用户名；忘记密码功能只对该邮箱账号适用。密码长度为 12 至 256 个字符且不能全为空白。未知账号、错误密码、停用账号和登录限速统一返回 `401 unauthorized`。
+
+`POST /api/auth/password-reset/code` 接受 `{ "email": "user@example.com" }`。服务为登记且启用的邮箱发送 10 分钟有效的一次性验证码；不论邮箱是否存在，响应和 HTTP 状态均相同，避免枚举账号。每个邮箱有 60 秒冷却和每小时 3 次发送上限；未知或停用邮箱不会创建限速记录。SMTP 未配置或发送失败时接口仍不泄露账户存在性；运维需通过部署配置确认邮件服务可用。验证码只保存以 `DJANGO_SECRET_KEY` 保护的 HMAC 摘要，不写入操作日志。
+
+`POST /api/auth/password-reset` 接受 `{ "email": "user@example.com", "code": "123456", "newPassword": "..." }`。只有未过期、未使用且未超过 5 次错误尝试的验证码可修改密码；成功后验证码作废并撤销该账号全部会话。新密码沿用 12 至 256 字符限制。请求体、邮件内容、验证码和新密码不会进入操作日志。两个密码找回接口都仅允许 HTTPS 或 loopback 请求；非 loopback HTTP 请求返回 `400 secure_transport_required`。生产必须设置随机 `DJANGO_SECRET_KEY`；开发默认密钥下找回功能拒绝运行。
 
 更改用户名、角色、直接权限、项目范围、启用状态或密码会撤销该账号现有会话。显示名称变更不会撤销会话。密码修改后需要重新登录。账号对象不包含密码哈希和会话数据；停用账号通过 `PATCH /api/users/{id}` 并设置 `active=false` 完成。
 

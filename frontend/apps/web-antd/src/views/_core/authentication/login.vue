@@ -17,11 +17,12 @@ const formSchema = computed((): VbenFormSchema[] => {
       component: 'VbenInput',
       componentProps: {
         autocomplete: 'username',
-        placeholder: '输入用户名',
+        placeholder: '输入邮箱或原用户名',
+        type: 'text',
       },
       fieldName: 'username',
-      label: '用户名',
-      rules: z.string().trim().min(1, { message: '请输入用户名' }),
+      label: '邮箱或用户名',
+      rules: z.string().trim().min(1, { message: '请输入邮箱或用户名' }),
     },
     {
       component: 'VbenInputPassword',
@@ -38,13 +39,14 @@ const formSchema = computed((): VbenFormSchema[] => {
     :form-schema="formSchema"
     :loading="authStore.loginLoading"
     :show-code-login="false"
-    :show-forget-password="false"
+    forget-password-path="/auth/forget-password"
+    :show-forget-password="true"
     :show-qrcode-login="false"
     :show-register="false"
     :show-remember-me="false"
     :show-third-party-login="false"
     title="登录 fuwu"
-    sub-title="使用管理员分配的账号登录，按授权项目管理发行。"
+    sub-title="建议使用邮箱登录；原用户名仍可继续使用。"
     submit-button-text="登录"
     @submit="authStore.authLogin"
   />

@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping
 
+from django.conf import settings
+from django.core.mail import send_mail
+
+from .accounts import account_store
 from .core import RBAC, ReleaseError
+
+_LOG = logging.getLogger(__name__)
 
 
 def login(rbac: RBAC, body: Mapping[str, Any], *, client_id: str = "local") -> dict[str, Any]:
@@ -57,3 +64,33 @@ def logout(rbac: RBAC, authorization: str | None) -> dict[str, Any]:
     if authorization and authorization.startswith("Bearer fuwu-account-v1."):
         rbac.account_store.logout(authorization[7:].strip())
     return {"code": 0, "data": None}
+
+
+def request_password_reset_code(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Send a reset code without revealing whether an account exists."""
+    if set(body) != {"email"}:
+        raise ReleaseError("invalid_password_reset_request", "password reset request is invalid", 422)
+    challenge = account_store().create_password_reset_code(body.get("email"))
+    if challenge is not None:
+        email, code, challenge_id = challenge
+        try:
+            if not settings.EMAIL_HOST or not settings.DEFAULT_FROM_EMAIL:
+                raise RuntimeError("email delivery is not configured")
+            send_mail(
+                subject="fuwu 密码重置验证码",
+                message=f"你的验证码是 {code}，10 分钟内有效。若不是你本人操作，请忽略此邮件。",
+                from_email=settings.DEFAULT_FROM_EMAIL,
+                recipient_list=[email],
+                fail_silently=False,
+            )
+        except Exception:
+            account_store().discard_password_reset_code(email, challenge_id)
+            _LOG.warning("password reset email delivery failed")
+    return {"code": 0, "data": {"message": "如果该邮箱对应有效账号，验证码将发送至邮箱。"}}
+
+
+def reset_password_with_code(body: Mapping[str, Any]) -> dict[str, Any]:
+    if set(body) != {"email", "code", "newPassword"}:
+        raise ReleaseError("invalid_password_reset_request", "password reset request is invalid", 422)
+    account_store().reset_password_with_code(body.get("email"), body.get("code"), body.get("newPassword"))
+    return {"code": 0, "data": {"status": "password_reset"}}

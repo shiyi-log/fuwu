@@ -34,6 +34,55 @@ uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FU
 
 该命令只允许在空账号库中创建一次超级管理员；成员注册、停用和密码重置由登录后的超级管理员在“账号管理”页面执行，接口权限为 `users.manage`。
 
+### 服务器本机修改或恢复密码
+
+服务器操作员可在交互终端运行密码恢复脚本，无需旧密码或 SMTP。使用运行中服务的同一账号数据库，并填写要恢复的邮箱或用户名；省略 `--username` 时会交互询问：
+
+```bash
+bash scripts/reset_password.sh --database "$FUWU_DATABASE" --username admin
+```
+
+脚本会读取项目根目录的 `.env`。本地库已初始化且 `.env` 中已设置 `FUWU_DATABASE` 时，可直接执行 `bash scripts/reset_password.sh --username admin`，无需再传数据库路径。用同一份本地配置启动后端时，在现有启动命令的 `uv run` 后添加 `--env-file .env`，以确保服务和脚本使用同一个数据库。
+
+也可直接运行 Python 命令，容器部署使用容器内的数据库路径：
+
+```bash
+uv run --frozen python -m fuwu_service.accounts reset-password --database "$FUWU_DATABASE" --username admin
+docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts reset-password --database /data/fuwu.sqlite3 --username admin
+```
+
+新密码需为 12 至 256 字符，终端会隐藏输入并要求输入两次。数据库优先使用 `--database`，也可由当前终端或 `.env` 中的 `FUWU_DATABASE` 明确指定；脚本拒绝缺失或未初始化的数据库、未知或停用账号、无隐藏输入能力的终端，不接受 `--password` 参数。两次密码不一致或按 Ctrl+C 取消时，原密码保持不变。直接执行 Python 模块时需自行传入 `--env-file .env` 给 `uv run`，或设置环境变量。
+
+恢复在同一事务中更新密码哈希、撤销该账号全部会话与找回验证码、清除该账号的登录失败限流并写入 `host-cli` 安全事件；客户端级登录限流仍按原规则到期。不修改角色、项目范围或启用状态，也不会修改发行数据。服务无需重启，下次登录使用新密码。执行此命令的权限边界是主机数据库写权限，请在服务主机上通过已授权的运维账号执行。
+
+### 邮箱登录与邮件验证码找回密码
+
+账号用户名可填写邮箱地址。用户在登录页选择“忘记密码”后，请求一次性验证码并通过邮件修改密码；找回接口不会说明邮箱是否已登记。验证码 10 分钟过期，每个邮箱 60 秒冷却、每小时最多发送 3 次，最多允许 5 次错误尝试；成功使用后立即作废并撤销该账号的所有现有会话。默认开发密钥下验证码找回会失败，生产必须配置随机 `DJANGO_SECRET_KEY`。
+
+要启用发信，给服务进程配置 SMTP 环境变量。`.env.example` 提供字段模板，Compose 会将以下值传入 API 容器：
+
+```dotenv
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_HOST_USER=service@example.com
+EMAIL_HOST_PASSWORD=由部署环境安全注入
+EMAIL_USE_TLS=true
+EMAIL_USE_SSL=false
+DEFAULT_FROM_EMAIL=Fuwu <service@example.com>
+```
+
+不要将真实 SMTP 密码写入仓库、镜像或聊天。使用 STARTTLS 时设置 `EMAIL_USE_TLS=true`；使用隐式 SSL 时设置 `EMAIL_USE_SSL=true` 且关闭 TLS。修改 `.env` 后重建或重启 API 容器以加载配置。生产必须同时配置强随机 `DJANGO_SECRET_KEY`，它用于验证码摘要保护；项目内置的开发密钥会被拒绝，轮换已配置的密钥会使尚未使用的验证码失效。
+
+找回密码 POST 接口只接受 HTTPS 或 loopback 请求。若 TLS 在反向代理终止，只有当可信代理会覆盖 `X-Forwarded-Proto` 时才在 `.env` 设置 `FUWU_TRUST_X_FORWARDED_PROTO=1`；轻量服务和 Django 适配器会据此识别反代 HTTPS。不要在可绕过可信代理直连的部署中开启此项。
+
+已有管理员账号可由服务器操作员在本机把唯一活跃超级管理员的用户名改为其可访问的邮箱。该命令不要求知道旧管理员密码，但需能登录服务主机，并要求确认当前账号名和目标邮箱：
+
+```bash
+docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts set-superadmin-email --database /data/fuwu.sqlite3
+```
+
+直接运行部署可将 `--database` 改为 `$FUWU_DATABASE`。命令只修改账号名，不重置密码；完成后管理员可在登录页请求验证码并自行设置新密码。新建实例应在首次 `bootstrap` 时直接使用可访问邮箱作为管理员用户名。
+
 启动轻量 API 服务：
 
 ```bash
@@ -60,14 +109,16 @@ cp apps/web-antd/.env.example apps/web-antd/.env.local
 pnpm dev:antd
 ```
 
-开发服务默认监听 `http://127.0.0.1:5666`，并代理 `/api` 到后端。类型检查和生产构建命令为：
+开发服务默认监听 `http://127.0.0.1:5666`，将 `/api` 请求代理到 `http://127.0.0.1:8088` 并保留原路径。若需要调整端口或后端地址，在 `apps/web-antd/.env.local` 中设置 `VITE_PORT` 和 `VITE_FUWU_API_PROXY`，代理地址只填后端 origin，不附加 `/api`。开发服务仅监听本机回环地址；指定端口被占用时会报错。上述代理配置用于 Vite 开发服务，生产环境仍由反向代理配置 API 路由。
+
+类型检查和生产构建命令为：
 
 ```bash
 pnpm --filter @vben/web-antd typecheck
 pnpm --filter @vben/web-antd build
 ```
 
-从 GitHub Release 远端 staging 大型 Docker 归档时，管理页面将 `/api/release-storage/stage-remote` 的浏览器超时默认设为 15 分钟，可在前端构建环境设置 `VITE_FUWU_STAGE_REMOTE_TIMEOUT_MS` 调整，允许范围为 60 秒至 60 分钟。随附 Nginx 配置将 API 代理读取和发送超时设为 20 分钟，部署环境应为更长的浏览器超时保留额外代理时间。服务端下载完成后仍需单独提交 `/api/release-storage/publish`。只有浏览器请求超时（408/504）或无 HTTP 状态的网络连接中断等无法判断请求是否已经完成的情况，页面才会保留原 staging 引用和 manifest 派生的发布字段，提示直接继续发布；不能再次发起同一个 staging 引用，否则会得到 `staging_conflict`。其他 4xx、502、503 以及 GitHub 资产、校验、授权或配置错误都属于明确失败，服务端会清理未完成的 staging，必须修正后重新 staging。切换项目或频道会丢弃当前页面中的待发布引用，避免跨项目提交。
+从 GitHub Release 远端 staging 大型 Docker 归档或自动同步最新发行时，管理页面将 `/api/release-storage/stage-remote`、`/api/release-storage/sync-latest` 的浏览器超时默认设为 15 分钟，可在前端构建环境设置 `VITE_FUWU_STAGE_REMOTE_TIMEOUT_MS` 调整，允许范围为 60 秒至 60 分钟。随附 Nginx 配置将 API 代理读取和发送超时设为 20 分钟，部署环境应为更长的浏览器超时保留额外代理时间。手工 `stage-remote` 完成后仍需单独提交 `/api/release-storage/publish`；发行页自动同步则在同一请求中完成 staging、校验与发布。仅手工 staging 请求在浏览器超时（408/504）或无 HTTP 状态的网络中断等无法判断是否完成时，会保留原 staging 引用和 manifest 派生字段，允许继续提交；不能重复同一 staging 引用，否则会得到 `staging_conflict`。自动同步若响应超时，下次检查会重新发现上游版本，并跳过已发布的内容。其他 4xx、502、503 以及 GitHub 资产、校验、授权或配置错误都属于明确失败，服务端会清理未完成的 staging。切换项目或频道会丢弃页面中的待发布引用，避免跨项目提交。
 
 ## Docker Compose
 
