@@ -42,6 +42,7 @@ from .repository import SQLiteRepository
 from .staging import read_staging_bundle
 from .validation import (
     CHANNELS,
+    FUWU_VERSION_RE,
     JOB_RE,
     PROJECT_RE,
     REVISION_RE,
@@ -65,6 +66,7 @@ from .validation import (
 __all__ = [
     "AwsCredentials",
     "CHANNELS",
+    "FUWU_VERSION_RE",
     "JOB_RE",
     "MemoryObjectStore",
     "ObjectStore",

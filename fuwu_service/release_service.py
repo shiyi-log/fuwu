@@ -13,11 +13,12 @@ from typing import Any, Mapping
 from .errors import ReleaseError
 from .github_releases import discover_latest_release, stage_remote_release
 from .object_store import ObjectStore, S3ObjectStore
-from .projects import validate_project_id
+from .projects import normalize_repository, validate_project_id
 from .repository import SQLiteRepository
 from .staging import read_staging_bundle
 from .validation import (
     CHANNELS,
+    _asset_entries,
     json_bytes,
     now_iso,
     project_value,
@@ -375,8 +376,8 @@ class ReleaseService:
         store; it is intentionally not accepted as part of ``request``.
         """
         with self._mutation_lock:
-            return stage_remote_release(self.staging_dir, self.repository.audit_event, request, actor=actor,
-                                        request_id=request_id, github_token=github_token, project_id=project_id)
+            return self._stage_remote_release(request, actor=actor, request_id=request_id,
+                                              github_token=github_token, project_id=project_id)
 
     def discover_latest_github_release(self, repository: str, *, github_token: str | None = None) -> dict[str, Any]:
         """Return the latest published GitHub release and its validated manifest.
@@ -387,8 +388,98 @@ class ReleaseService:
         asset path used by remote staging.  The response contains only release
         metadata and asset names; no GitHub URLs or credentials are returned.
         """
-        result = discover_latest_release(repository, github_token=github_token)
+        result = self._discover_latest_github_release(repository, github_token=github_token)
         return {key: value for key, value in result.items() if not key.startswith("_")}
+
+    def _discover_latest_github_release(self, repository: str, *, github_token: str | None = None) -> dict[str, Any]:
+        return discover_latest_release(repository, github_token=github_token)
+
+    def _stage_remote_release(self, request: Mapping[str, Any], *, actor: str, request_id: str,
+                              github_token: str | None = None, project_id: str | None = None) -> tuple[int, dict[str, Any]]:
+        return stage_remote_release(self.staging_dir, self.repository.audit_event, request, actor=actor,
+                                    request_id=request_id, github_token=github_token, project_id=project_id)
+
+    def sync_latest_github_release(
+        self,
+        project_id: str,
+        repository: str,
+        channel: str,
+        *,
+        actor: str,
+        request_id: str,
+        github_token: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        """Publish a newer formal GitHub release through protected staging."""
+        project_id = project_value(validate_project_id, project_id)
+        repository = project_value(normalize_repository, repository)
+        channel = validate_channel(channel)
+        registered = self.repository.get_project(project_id)
+        if registered is None:
+            raise ReleaseError("project_not_found", "project was not found", 404)
+        if not registered["active"]:
+            raise ReleaseError("project_inactive", "project is inactive", 403)
+        if registered["repository"].lower() != repository:
+            raise ReleaseError("project_repository_mismatch", "repository does not match registered project", 409)
+        with self._mutation_lock:
+            discovered = self._discover_latest_github_release(repository, github_token=github_token)
+            latest = {key: value for key, value in discovered.items() if not key.startswith("_")}
+            latest["project"] = project_id
+            version = discovered["version"]
+            version_key = tuple(int(part) for part in version.split("."))
+
+            pointer = self.repository.get_latest(project_id, channel)
+            if pointer and tuple(int(part) for part in pointer["version"].split(".")) > version_key:
+                return 200, {"status": "current_newer", "latest": latest, "current": {"version": pointer["version"]}}
+
+            existing = self.repository.get_release(project_id, version, channel)
+            if existing:
+                remote_entries = _asset_entries(discovered["_manifest"].get("assets"))
+                published_entries = _asset_entries(existing["manifest"].get("assets"))
+
+                def signature(entries: list[dict[str, Any]]) -> list[tuple[str, Any, str]]:
+                    return sorted(
+                        (entry["path"], entry.get("size"), str(entry.get("sha256", "")).lower())
+                        for entry in entries
+                    )
+
+                same_release = (
+                    existing["repository"].lower() == repository
+                    and str(existing["release_id"]) == str(discovered["releaseId"])
+                    and existing["tag"] == discovered["tag"]
+                    and existing["revision"] == discovered["revision"]
+                    and signature(remote_entries) == signature(published_entries)
+                )
+                if not same_release:
+                    raise ReleaseError("release_conflict", "same version already has different release content", 409)
+                return 200, {"status": "already_published", "latest": latest, "release": self._public_release(existing)}
+
+            staging_ref = "sync-" + uuid.uuid4().hex
+            self._stage_remote_release(
+                {
+                    "repository": repository,
+                    "tag": discovered["tag"],
+                    "staging_ref": staging_ref,
+                    "assets": discovered["assetNames"],
+                    "manifest": discovered["_manifest"],
+                },
+                actor=actor,
+                request_id=request_id + "-stage",
+                github_token=github_token,
+                project_id=project_id,
+            )
+            _, published = self._publish(
+                {
+                    "project": project_id,
+                    "channel": channel,
+                    "version": version,
+                    "tag": discovered["tag"],
+                    "revision": discovered["revision"],
+                    "staging_ref": staging_ref,
+                },
+                actor=actor,
+                request_id=request_id,
+            )
+            return 201, {"status": "published", "latest": latest, "release": published["release"]}
 
 
     def _publish(self, request: Mapping[str, Any], *, actor: str, request_id: str) -> tuple[int, dict[str, Any]]:

@@ -217,9 +217,10 @@ class RemoteStageTests(unittest.TestCase):
                 self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-encoding")
 
     def test_discover_latest_filters_draft_and_prerelease_and_reads_manifest(self) -> None:
+        latest_manifest = {**self.manifest, "version": "1.0.14", "tag": "v1.0.14"}
         formal = {
             "id": 1001,
-            "tag_name": "v0.0.1",
+            "tag_name": "v1.0.14",
             "draft": False,
             "prerelease": False,
             "published_at": "2026-10-24T00:00:00Z",
@@ -247,12 +248,12 @@ class RemoteStageTests(unittest.TestCase):
                     return _Response(json.dumps(self_manifest).encode())
                 raise AssertionError(f"unexpected URL: {request.full_url}")
 
-        self_manifest = self.manifest
+        self_manifest = latest_manifest
         opener = LatestOpener()
         with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             discovered = self.service.discover_latest_github_release("owner/repository", github_token="ghs-test-token")
-        self.assertEqual(discovered["tag"], "v0.0.1")
-        self.assertEqual(discovered["version"], "0.0.1")
+        self.assertEqual(discovered["tag"], "v1.0.14")
+        self.assertEqual(discovered["version"], "1.0.14")
         self.assertEqual(discovered["githubReleaseId"], 1001)
         self.assertEqual(discovered["assetNames"], ["package.tar.gz"])
         self.assertEqual(discovered["manifest"]["verificationSource"], "heyue-release-storage")
@@ -260,12 +261,13 @@ class RemoteStageTests(unittest.TestCase):
         self.assertNotIn("_assetMap", discovered)
 
     def test_stage_latest_discovers_and_stages_formal_release(self) -> None:
+        latest_manifest = {**self.manifest, "version": "1.0.14", "tag": "v1.0.14"}
         sums = f"{self.digest}  package.tar.gz\n".encode()
-        manifest_body = json.dumps(self.manifest).encode()
+        manifest_body = json.dumps(latest_manifest).encode()
         package_body = self.body
         release = {
             "id": 1001,
-            "tag_name": "v0.0.1",
+            "tag_name": "v1.0.14",
             "draft": False,
             "prerelease": False,
             "assets": [
@@ -297,11 +299,19 @@ class RemoteStageTests(unittest.TestCase):
             status, staged = self.service.stage_remote_release(request, actor="admin", request_id="stage-latest", github_token="ghs-test-token")
         self.assertEqual(status, 201)
         self.assertEqual(staged["staging_ref"], "latest-job")
-        self.assertEqual(staged["release"]["tag"], "v0.0.1")
+        self.assertEqual(staged["release"]["tag"], "v1.0.14")
         job = Path(self.directory.name) / "staging" / "latest-job"
         self.assertEqual((job / "package.tar.gz").read_bytes(), self.body)
-        self.assertEqual(json.loads((job / "manifest.json").read_text())["tag"], "v0.0.1")
+        self.assertEqual(json.loads((job / "manifest.json").read_text())["tag"], "v1.0.14")
         self.assertTrue(all(request.get_header("Authorization") == "Bearer ghs-test-token" for request, _ in opener.requests))
+        status, published = self.service.publish(
+            {"project": "remote", "version": "1.0.14", "channel": "stable", "staging_ref": "latest-job"},
+            actor="admin",
+            request_id="publish-latest",
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(published["release"]["version"], "1.0.14")
+        self.assertEqual(self.service.repository.get_latest("remote", "stable")["version"], "1.0.14")
 
     def test_discover_latest_rejects_when_only_prerelease_exists(self) -> None:
         class OnlyPrereleaseOpener:

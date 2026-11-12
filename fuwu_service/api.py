@@ -43,15 +43,17 @@ def _github_authorizations():
 def requires_generated_request_id(path: str) -> bool:
     """Return whether a route must never accept a caller-supplied request ID.
 
-    Sensitive management routes can receive credentials in their request body.
-    Generate their IDs before an adapter parses that body, so malformed JSON
-    errors cannot echo an attacker-controlled canary in the response.
+    Sensitive management routes can receive credentials in their request body,
+    and automatic publication must use a server-generated idempotency scope.
+    Generate IDs before an adapter parses the body so malformed JSON errors
+    cannot echo attacker-controlled values in the response.
     """
 
     return path in {
         "/api/settings/storage",
         "/api/settings/github-authorization",
         "/api/settings/github-authorization/check",
+        "/api/release-storage/sync-latest",
         "/api/release-storage/stage-remote",
     }
 
@@ -221,7 +223,7 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
             code = 200
         elif path == "/api/release-storage/latest" and method == "GET":
             category, action, route = "release", "latest", path
-            rbac.require(authorization, "release.storage.publish")
+            rbac.require(authorization, "release.storage.read")
             project_id = _allowed_project(rbac, authorization, query.get("project"))
             project = service.repository.get_project(project_id)
             if project is None:
@@ -230,6 +232,25 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
             response = service.discover_latest_github_release(project["repository"], github_token=github_token)
             response["project"] = project_id
             code = 200
+        elif path == "/api/release-storage/sync-latest" and method == "POST":
+            category, action, route = "release", "sync_latest", path
+            rbac.require(authorization, "release.storage.publish")
+            if set(body) - {"project", "channel"}:
+                raise ReleaseError("invalid_sync_request", "latest release sync request is invalid", 422)
+            project_id = _allowed_project(rbac, authorization, body.get("project"))
+            channel = validate_channel(body.get("channel", "stable"))
+            project = service.repository.get_project(project_id)
+            if project is None:
+                raise ReleaseError("project_not_found", "project was not found", 404)
+            github_token = _github_authorizations().get_token()
+            code, response = service.sync_latest_github_release(
+                project_id,
+                project["repository"],
+                channel,
+                actor=actor,
+                request_id=request_id,
+                github_token=github_token,
+            )
         elif path == "/api/release-storage/stage-remote" and method == "POST":
             category, action, route = "release", "stage_remote", path
             rbac.require(authorization, "release.storage.publish")

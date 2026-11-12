@@ -14,7 +14,8 @@ from .projects import ProjectInputError
 
 
 UTC = dt.timezone.utc
-VERSION_RE = re.compile(r"^(0|[1-9])\.(0|[1-9])\.(0|[1-9])$")
+VERSION_RE = re.compile(r"^(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)$")
+FUWU_VERSION_RE = re.compile(r"^(0|[1-9])\.(0|[1-9])\.(0|[1-9])$")
 REVISION_RE = re.compile(r"^[0-9a-fA-F]{40}$")
 JOB_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 PROJECT_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
@@ -49,10 +50,11 @@ def validate_version(value: str) -> str:
 def next_version(value: str) -> str:
     """Return the next single-digit SemVer release (0.0.9 -> 0.1.0).
 
-    The release registry intentionally uses one decimal digit per component so
-    release ordering remains explicit in the small initial deployment.
+    Fuwu's own release sequence keeps one decimal digit per component, while
+    hosted projects use the full SemVer range accepted by ``validate_version``.
     """
-    value = validate_version(value)
+    if not isinstance(value, str) or value.startswith("v") or not FUWU_VERSION_RE.fullmatch(value):
+        raise ReleaseError("invalid_version", "Fuwu version format is invalid", 422)
     major, minor, patch = (int(part) for part in value.split("."))
     if patch < 9:
         patch += 1

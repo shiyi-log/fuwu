@@ -6,7 +6,21 @@ const SAFE_REQUEST_CODES = new Set([
   'ETIMEDOUT',
 ]);
 const SAFE_SERVER_CODES = new Set([
+  'github_authorization_required',
+  'github_repository_access_denied',
+  'github_token_invalid',
+  'github_unavailable',
   'immutable_object_conflict',
+  'remote_asset_missing',
+  'remote_asset_unavailable',
+  'remote_checksums_invalid',
+  'remote_checksums_missing',
+  'remote_checksum_mismatch',
+  'remote_manifest_missing',
+  'remote_manifest_unavailable',
+  'remote_release_not_found',
+  'remote_release_unavailable',
+  'remote_size_mismatch',
   'release_conflict',
 ]);
 

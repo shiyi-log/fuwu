@@ -23,6 +23,7 @@ urlpatterns = [
     path("releases/<path:storage_key>", views.storage_key_view),
     path("api/release-storage/status", views.api_view),
     path("api/release-storage/latest", views.api_view),
+    path("api/release-storage/sync-latest", views.api_view),
     path("api/release-storage/stage-remote", views.api_view),
     path("api/release-storage/publish", views.api_view),
     path("api/release-storage/rollback", views.api_view),
