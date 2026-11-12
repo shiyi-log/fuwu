@@ -36,6 +36,13 @@ from .object_store import (
     _open_s3_url,
     load_aws_credentials,
 )
+from .projects import (
+    ProjectInputError,
+    normalize_repository,
+    project_create_values,
+    project_update_values,
+    validate_project_id,
+)
 from .rbac import RBAC
 from .release_service import ReleaseService
 from .repository import SQLiteRepository
@@ -64,6 +71,11 @@ from .validation import (
 )
 
 __all__ = [
+    "ProjectInputError",
+    "normalize_repository",
+    "project_create_values",
+    "project_update_values",
+    "validate_project_id",
     "AwsCredentials",
     "CHANNELS",
     "FUWU_VERSION_RE",
