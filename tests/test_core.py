@@ -195,7 +195,7 @@ class SigV4Tests(unittest.TestCase):
             def root_owned(descriptor):
                 value = real_stat(descriptor)
                 return SimpleNamespace(st_mode=value.st_mode, st_uid=0)
-            with patch("fuwu_service.core.os.fstat", side_effect=root_owned):
+            with patch("fuwu_service.object_store.os.fstat", side_effect=root_owned):
                 credentials = load_aws_credentials({"AWS_CREDENTIALS_FILE": str(path)})
             self.assertEqual(credentials.access_key, "AKIA")
             path.chmod(0o644)

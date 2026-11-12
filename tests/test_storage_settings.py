@@ -186,7 +186,7 @@ class ManagedStorageSettingsTests(unittest.TestCase):
         response.read.return_value = b""
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
-        with patch("fuwu_service.core._open_s3_url", return_value=response) as open_request:
+        with patch("fuwu_service.object_store._open_s3_url", return_value=response) as open_request:
             result = store.probe(timeout=3)
         self.assertTrue(result["reachable"])
         args, kwargs = open_request.call_args
@@ -195,7 +195,7 @@ class ManagedStorageSettingsTests(unittest.TestCase):
         self.assertEqual(args[0].full_url, "https://s3.us-east-1.amazonaws.com/sample-storage")
         import urllib.error
         failure = urllib.error.HTTPError(args[0].full_url, 403, "provider secret and response", {}, None)
-        with patch("fuwu_service.core._open_s3_url", side_effect=failure):
+        with patch("fuwu_service.object_store._open_s3_url", side_effect=failure):
             failed = store.probe()
         self.assertFalse(failed["reachable"])
         self.assertNotIn("provider", repr(failed))

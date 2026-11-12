@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from .core import ReleaseError, now_iso
+from .errors import ReleaseError
+from .validation import now_iso
 
 
 class AdministrationStore:

@@ -81,7 +81,7 @@ class RemoteStageTests(unittest.TestCase):
     def test_stage_downloads_with_server_token_and_publish_consumes_staging(self) -> None:
         sums = f"{self.digest}  package.tar.gz\n".encode()
         opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": sums})
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             status, staged = self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-1", github_token="ghs-test-token")
         self.assertEqual(status, 201)
         self.assertEqual(staged["staging_ref"], "remote-job")
@@ -109,7 +109,7 @@ class RemoteStageTests(unittest.TestCase):
             },
         }
         opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": upstream_sums})
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             status, _staged = self.service.stage_remote_release(
                 self._request(manifest=manifest), actor="admin", request_id="stage-normalize"
             )
@@ -145,7 +145,7 @@ class RemoteStageTests(unittest.TestCase):
 
         sums = f"{self.digest}  package.tar.gz\n".encode()
         opener = ApiAssetOpener(release, {"package.tar.gz": self.body, "SHA256SUMS": sums})
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             status, staged = self.service.stage_remote_release(
                 self._request(), actor="admin", request_id="stage-api-asset", github_token="ghs-test-token"
             )
@@ -184,7 +184,7 @@ class RemoteStageTests(unittest.TestCase):
         sums = f"{first_digest}  first.tar.gz\n{self.digest}  package.tar.gz\n".encode()
         opener = _Opener(release, {"first.tar.gz": first_body, "package.tar.gz": self.body, "SHA256SUMS": sums}, fail_asset="package.tar.gz")
         request = self._request(assets=["first.tar.gz", "package.tar.gz"], manifest=manifest)
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(ReleaseError, "remote release asset is unavailable"):
                 self.service.stage_remote_release(request, actor="admin", request_id="stage-fail")
         self.assertFalse((Path(self.directory.name) / "staging" / "remote-job").exists())
@@ -196,7 +196,7 @@ class RemoteStageTests(unittest.TestCase):
 
     def test_invalid_upstream_checksum_is_rejected_and_job_is_removed(self) -> None:
         opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": ("0" * 64 + "  package.tar.gz\n").encode()})
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(ReleaseError, "remote asset checksum does not match"):
                 self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-checksum")
         self.assertFalse((Path(self.directory.name) / "staging" / "remote-job").exists())
@@ -204,7 +204,7 @@ class RemoteStageTests(unittest.TestCase):
     def test_duplicate_upstream_checksum_entries_are_rejected(self) -> None:
         sums = f"{self.digest}  package.tar.gz\n{self.digest}  package.tar.gz\n".encode()
         opener = _Opener(self.release, {"package.tar.gz": self.body, "SHA256SUMS": sums})
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(ReleaseError, "remote SHA256SUMS contains duplicate assets"):
                 self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-duplicate")
         self.assertFalse((Path(self.directory.name) / "staging" / "remote-job").exists())
@@ -212,7 +212,7 @@ class RemoteStageTests(unittest.TestCase):
     def test_invalid_upstream_metadata_encoding_is_safe(self) -> None:
         opener = _Opener(self.release, {})
         opener.open = lambda request, timeout=0: _Response(b"\xff")  # type: ignore[method-assign]
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             with self.assertRaisesRegex(ReleaseError, "remote release metadata is unavailable"):
                 self.service.stage_remote_release(self._request(), actor="admin", request_id="stage-encoding")
 
@@ -250,7 +250,7 @@ class RemoteStageTests(unittest.TestCase):
 
         self_manifest = latest_manifest
         opener = LatestOpener()
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             discovered = self.service.discover_latest_github_release("owner/repository", github_token="ghs-test-token")
         self.assertEqual(discovered["tag"], "v1.0.14")
         self.assertEqual(discovered["version"], "1.0.14")
@@ -295,7 +295,7 @@ class RemoteStageTests(unittest.TestCase):
 
         opener = LatestStageOpener()
         request = {"repository": "owner/repository", "staging_ref": "latest-job", "latest": True}
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=opener):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=opener):
             status, staged = self.service.stage_remote_release(request, actor="admin", request_id="stage-latest", github_token="ghs-test-token")
         self.assertEqual(status, 201)
         self.assertEqual(staged["staging_ref"], "latest-job")
@@ -318,7 +318,7 @@ class RemoteStageTests(unittest.TestCase):
             def open(self, request, timeout=0):
                 return _Response(json.dumps([{"tag_name": "v0.0.2-rc1", "draft": False, "prerelease": True, "assets": []}]).encode())
 
-        with patch("fuwu_service.core.urllib.request.build_opener", return_value=OnlyPrereleaseOpener()):
+        with patch("fuwu_service.github_releases.urllib.request.build_opener", return_value=OnlyPrereleaseOpener()):
             with self.assertRaisesRegex(ReleaseError, "no published GitHub release") as error:
                 self.service.discover_latest_github_release("owner/repository")
         self.assertEqual(error.exception.code, "remote_release_not_found")
