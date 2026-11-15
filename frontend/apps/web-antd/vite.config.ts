@@ -1,17 +1,22 @@
 import { defineConfig } from '@vben/vite-config';
 
-export default defineConfig(async () => {
+import { loadEnv } from 'vite';
+
+export default defineConfig(async (config) => {
+  const env = loadEnv(config?.mode ?? 'development', process.cwd());
+
   return {
     application: {},
     vite: {
       server: {
-        port: 1122,
+        host: '127.0.0.1',
+        port: Number(env.VITE_PORT || 5666),
+        strictPort: true,
         proxy: {
           '/api': {
             changeOrigin: true,
-            rewrite: (path) => path.replace(/^\/api/, ''),
             // fuwu Django API
-            target: 'http://localhost:1123/api',
+            target: env.VITE_FUWU_API_PROXY || 'http://127.0.0.1:8088',
             ws: true,
           },
         },

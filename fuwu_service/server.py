@@ -13,6 +13,9 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
+# The lightweight entry point uses Django's configured hash/mail settings too.
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+
 from .administration import administration_store
 from .api import handle_api, requires_generated_request_id
 from .bootstrap import (
@@ -220,6 +223,10 @@ class ApiHandler(BaseHTTPRequestHandler):
                 return True
         except (ValueError, IndexError):
             pass
+        if os.environ.get("FUWU_TRUST_X_FORWARDED_PROTO", "").strip().casefold() in {"1", "true", "yes", "on"}:
+            forwarded_proto = self.headers.get("X-Forwarded-Proto", "").rsplit(",", 1)[-1].strip().casefold()
+            if forwarded_proto == "https":
+                return True
         return isinstance(self.connection, ssl.SSLSocket)
 
     def _dispatch(self) -> None:

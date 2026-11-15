@@ -31,11 +31,14 @@ class AccountTests(unittest.TestCase):
         # PBKDF2PasswordHasher defaults in deployment.
         self.iterations = patch.object(PBKDF2PasswordHasher, "iterations", 1000)
         self.iterations.start()
+        self.secret_key = patch.object(accounts.settings, "SECRET_KEY", "test-only-email-reset-key-2026")
+        self.secret_key.start()
         self.store = AccountStore(self.database)
         self.admin = self.store.bootstrap_superadmin("admin", PASSWORD, "管理员")
 
     def tearDown(self) -> None:
         self.store.close()
+        self.secret_key.stop()
         self.iterations.stop()
         self.directory.cleanup()
 
@@ -161,6 +164,118 @@ class AccountTests(unittest.TestCase):
         self.store.change_password(user["id"], NEW_PASSWORD, PASSWORD)
         self.assert_error("unauthorized", self.store.authenticate, token)
         self.session("reader", PASSWORD)
+
+    def test_email_username_reset_code_is_hmac_stored_one_time_and_revokes_sessions(self) -> None:
+        token = self.session()
+        renamed = self.store.set_superadmin_email("admin", "Admin@Example.com")
+        self.assertEqual(renamed["username"], "admin@example.com")
+        self.assert_error("unauthorized", self.store.authenticate, token)
+        self.assert_error("unauthorized", self.store.login, "admin", PASSWORD)
+        self.store.login("ADMIN@example.com", PASSWORD)
+
+        challenge = self.store.create_password_reset_code("ADMIN@example.com")
+        self.assertIsNotNone(challenge)
+        email, code, challenge_id = challenge
+        self.assertEqual(email, "admin@example.com")
+        challenge_row = self.store.conn.execute("SELECT email_hash,code_hash FROM account_password_reset_codes WHERE challenge_id=?", (challenge_id,)).fetchone()
+        self.assertNotIn(code, " ".join(challenge_row))
+        self.assertNotIn(email, " ".join(challenge_row))
+        self.assertEqual(self.store.conn.execute("SELECT COUNT(*) FROM account_password_reset_limits").fetchone()[0], 1)
+        self.assertIsNone(self.store.create_password_reset_code(email))
+        self.assertIsNone(self.store.create_password_reset_code("missing@example.com"))
+        self.assertEqual(self.store.conn.execute("SELECT COUNT(*) FROM account_password_reset_limits").fetchone()[0], 1)
+        session = self.session("admin@example.com")
+        self.assert_error("invalid_reset_code", self.store.reset_password_with_code, email, "000000" if code != "000000" else "000001", NEW_PASSWORD)
+        row = self.store.conn.execute("SELECT attempts FROM account_password_reset_codes WHERE email_hash=?", (self.store._reset_digest("email:" + email, self.store._reset_secret()),)).fetchone()
+        self.assertEqual(row["attempts"], 1)
+        self.assert_error("invalid_password", self.store.reset_password_with_code, email, code, "short")
+        self.assertIsNone(self.store.conn.execute("SELECT consumed_at FROM account_password_reset_codes WHERE email_hash=?", (self.store._reset_digest("email:" + email, self.store._reset_secret()),)).fetchone()[0])
+        self.store.reset_password_with_code(email, code, NEW_PASSWORD)
+        self.assert_error("unauthorized", self.store.authenticate, session)
+        self.store.login(email, NEW_PASSWORD)
+        self.assert_error("invalid_reset_code", self.store.reset_password_with_code, email, code, PASSWORD)
+
+        event = self.store.conn.execute("SELECT action,outcome FROM account_security_events ORDER BY id DESC LIMIT 1").fetchone()
+        self.assertEqual((event["action"], event["outcome"]), ("password_reset_completed", "success"))
+
+    def test_one_reset_code_cannot_trigger_parallel_password_hashes(self) -> None:
+        user = self.create("parallel-reset@example.com")
+        challenge = self.store.create_password_reset_code(user["username"])
+        original_hash = self.store._password
+        hash_calls = 0
+        hash_lock = threading.Lock()
+
+        def counted_hash(password):
+            nonlocal hash_calls
+            with hash_lock:
+                hash_calls += 1
+            time.sleep(0.05)
+            return original_hash(password)
+
+        def reset():
+            try:
+                self.store.reset_password_with_code(user["username"], challenge[1], NEW_PASSWORD)
+                return "success"
+            except ReleaseError as error:
+                return error.code
+
+        with patch.object(self.store, "_password", side_effect=counted_hash):
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                results = list(executor.map(lambda _item: reset(), range(2)))
+        self.assertEqual(sorted(results), ["invalid_reset_code", "success"])
+        self.assertEqual(hash_calls, 1)
+
+    def test_email_reset_expiry_attempt_limit_and_storage_cap(self) -> None:
+        expired = self.create("expired@example.com")
+        with patch("fuwu_service.accounts.time.time", return_value=1000):
+            challenge = self.store.create_password_reset_code(expired["username"])
+        with patch("fuwu_service.accounts.time.time", return_value=1000 + accounts.RESET_CODE_LIFETIME_SECONDS):
+            self.assert_error("invalid_reset_code", self.store.reset_password_with_code, expired["username"], challenge[1], NEW_PASSWORD)
+
+        limited = self.create("limited@example.com")
+        challenge = self.store.create_password_reset_code(limited["username"])
+        wrong_code = "000000" if challenge[1] != "000000" else "000001"
+        for _ in range(accounts.RESET_CODE_MAX_ATTEMPTS):
+            self.assert_error("invalid_reset_code", self.store.reset_password_with_code, limited["username"], wrong_code, NEW_PASSWORD)
+        self.assertIsNone(self.store.conn.execute("SELECT 1 FROM account_password_reset_codes WHERE user_id=?", (limited["id"],)).fetchone())
+        self.assert_error("invalid_reset_code", self.store.reset_password_with_code, limited["username"], challenge[1], NEW_PASSWORD)
+
+        capacity = self.create("capacity@example.com")
+        with patch.object(accounts, "RESET_LIMIT_ROW_CAPACITY", 0):
+            self.assertIsNone(self.store.create_password_reset_code(capacity["username"]))
+
+    def test_missing_and_wrong_reset_codes_do_not_trigger_password_hashing(self) -> None:
+        for _ in range(30):
+            with patch.object(self.store, "_password", side_effect=AssertionError("invalid codes must not hash candidate passwords")):
+                self.assert_error("invalid_reset_code", self.store.reset_password_with_code, "missing@example.com", "123456", NEW_PASSWORD)
+        user = self.create("wrong-code@example.com")
+        challenge = self.store.create_password_reset_code(user["username"])
+        wrong_code = "000000" if challenge[1] != "000000" else "000001"
+        with patch.object(self.store, "_password", side_effect=AssertionError("invalid codes must not hash candidate passwords")):
+            self.assert_error("invalid_reset_code", self.store.reset_password_with_code, user["username"], wrong_code, NEW_PASSWORD)
+        row = self.store.conn.execute("SELECT attempts FROM account_password_reset_codes WHERE user_id=?", (user["id"],)).fetchone()
+        self.assertEqual(row["attempts"], 1)
+        self.assertEqual(self.store.conn.execute("SELECT COUNT(*) FROM account_password_reset_limits").fetchone()[0], 1)
+
+    def test_email_username_validation_and_recovery_cli(self) -> None:
+        reader = self.create("reader@example.com")
+        self.assertEqual(reader["username"], "reader@example.com")
+        self.assert_error("invalid_account", self.store.create_user, self.admin["id"], {"username": "bad@", "password": PASSWORD})
+        self.assert_error("username_exists", self.store.set_superadmin_email, "admin", "reader@example.com")
+        self.assert_error("superadmin_not_found", self.store.set_superadmin_email, "reader", "other@example.com")
+
+        cli_database = str(Path(self.directory.name) / "cli-email.sqlite3")
+        with AccountStore(cli_database) as cli_store:
+            cli_store.bootstrap_superadmin("root-admin", PASSWORD)
+        inputs = iter(["root-admin", "root@example.com", "ROOT@example.com"])
+        with patch("builtins.input", side_effect=lambda _prompt: next(inputs)):
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(main(["set-superadmin-email", "--database", cli_database]), 0)
+        self.assertIn("下一步可在登录页请求密码重置验证码", output.getvalue())
+        with AccountStore(cli_database) as cli_store:
+            self.assertEqual(cli_store.conn.execute("SELECT username FROM account_users").fetchone()[0], "root@example.com")
+            event = cli_store.conn.execute("SELECT action,actor,outcome FROM account_security_events").fetchone()
+            self.assertEqual(tuple(event), ("superadmin_email_set", "host-cli", "success"))
 
     def test_last_superadmin_cannot_be_deleted_disabled_or_demoted(self) -> None:
         self.assert_error("last_superadmin", self.store.delete_user, self.admin["id"], self.admin["id"])

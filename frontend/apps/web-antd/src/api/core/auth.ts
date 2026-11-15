@@ -19,6 +19,15 @@ export namespace AuthApi {
     data: string;
     status: number;
   }
+
+  export interface PasswordResetCodeParams {
+    email: string;
+  }
+
+  export interface PasswordResetParams extends PasswordResetCodeParams {
+    code: string;
+    newPassword: string;
+  }
 }
 
 /**
@@ -31,6 +40,24 @@ export async function loginApi(data: AuthApi.LoginParams) {
     // Do not let an Axios error containing the submitted password
     // escape into Vue's unhandled-event logging or a caller's diagnostics.
     throw new Error('登录失败，请检查账号密码或服务连接');
+  }
+}
+
+/** Send a one-time password reset code to the account email. */
+export async function requestPasswordResetCodeApi(data: AuthApi.PasswordResetCodeParams) {
+  try {
+    return await requestClient.post('/auth/password-reset/code', data);
+  } catch {
+    throw new Error('验证码发送失败，请稍后重试');
+  }
+}
+
+/** Reset the account password with a one-time email code. */
+export async function resetPasswordWithCodeApi(data: AuthApi.PasswordResetParams) {
+  try {
+    return await requestClient.post('/auth/password-reset', data);
+  } catch {
+    throw new Error('密码重置失败，请检查验证码或稍后重试');
   }
 }
 

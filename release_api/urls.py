@@ -8,6 +8,8 @@ urlpatterns = [
     path("api/auth/codes", views.api_view),
     path("api/auth/logout", views.api_view),
     path("api/auth/password", views.api_view),
+    path("api/auth/password-reset/code", views.api_view),
+    path("api/auth/password-reset", views.api_view),
     path("api/user/info", views.api_view),
     path("api/users", views.api_view),
     path("api/users/<str:user_id>", views.api_view),

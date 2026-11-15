@@ -50,6 +50,8 @@ def requires_generated_request_id(path: str) -> bool:
     """
 
     return path in {
+        "/api/auth/password-reset/code",
+        "/api/auth/password-reset",
         "/api/settings/storage",
         "/api/settings/github-authorization",
         "/api/settings/github-authorization/check",
@@ -109,6 +111,18 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                 # A connection identity is used only for throttling, never persisted in logs.
                 response = auth.login(rbac, body, client_id=client_id)
                 actor, _ = rbac.authenticate("Bearer " + response["data"]["accessToken"])
+                code = 200
+                return code, response
+            if path == "/api/auth/password-reset/code" and method == "POST":
+                if not request_secure:
+                    raise ReleaseError("secure_transport_required", "secure connection is required", 400)
+                response = auth.request_password_reset_code(body)
+                code = 200
+                return code, response
+            if path == "/api/auth/password-reset" and method == "POST":
+                if not request_secure:
+                    raise ReleaseError("secure_transport_required", "secure connection is required", 400)
+                response = auth.reset_password_with_code(body)
                 code = 200
                 return code, response
             if path == "/api/auth/logout" and method == "POST":
@@ -387,7 +401,10 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
         if path != "/healthz":
             # Log only predefined route templates; unknown request paths and
             # query strings may contain secrets and must not be persisted.
-            if route.startswith("/api/auth/") and route not in {"/api/auth/login", "/api/auth/logout", "/api/auth/codes", "/api/auth/password"}:
+            if route.startswith("/api/auth/") and route not in {
+                "/api/auth/login", "/api/auth/logout", "/api/auth/codes", "/api/auth/password",
+                "/api/auth/password-reset/code", "/api/auth/password-reset",
+            }:
                 route, action = "/api/unknown", "unknown"
             try:
                 administration_store().record(category=category, action=action, actor=actor,
