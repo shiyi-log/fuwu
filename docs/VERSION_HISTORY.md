@@ -14,14 +14,14 @@
 | `0.0.7` | GitHub Release 已发布；标签固定 `4844ae4` | 2026-10-24 | 保持 SQLite；无数据迁移 | Heyue Bootstrap 强绑定 stable 指针与不可变 manifest，并固定传入已核验版本和交互模式；stable/latest 指针保持兼容 | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、嵌入 Python/Shell 语法和 argv 回归通过；远端 8088 健康、8000 未监听、真实 Bootstrap `--help` 通过；Heyue stable 保持 `v1.0.4` |
 | `0.0.8` | GitHub Release 已发布；标签固定 `468972d` | 2026-10-25 | 保持 SQLite；无数据迁移 | Heyue Shell Bootstrap 将 Python 主体写入受保护临时文件后启动，交互安装器继承调用端 TTY；stable/latest、匿名下载和固定安装 argv 契约保持兼容 | 本地 `133 passed`、94 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python 编译和 PTY 回归通过；生产 revision `468972d`、8088 健康 200、线上 Bootstrap 摘要读回通过；Heyue 测试服务器修复后完整安装待复验 |
 | `0.0.9` | GitHub Release 与生产部署已完成；生产 revision `6271b07` | 2026-11-10 | 保持 SQLite；无数据迁移 | 托管项目发行版本接受完整三段 SemVer；latest GitHub Release 改为 `release.storage.read` 只读权限；新增受 `release.storage.publish` 保护的 `/api/release-storage/sync-latest`，自动发现、暂存、校验并发布新正式版，避免降级和同版本覆盖 | 后端 `139 passed`、96 subtests，Django check、迁移漂移检查、前端 focused Vitest `28 passed`、typecheck 和生产构建通过；本地内存存储真实自动发布与制品 SHA256 校验通过；生产健康检查通过，但生产自动同步写入验收待完成 |
-| `0.1.0` | 本地候选；未打 tag、未创建 Release、未部署 | 2026-11-11 | 账号 SQLite 初始化会幂等创建验证码、限速与安全事件表；既有账号行和密码哈希不变 | 账号名支持邮箱且保留旧用户名；新增邮件验证码自助重置密码端点；SMTP 只从部署环境读取；提供服务器本机绑定管理员邮箱及隐藏输入密码恢复命令 | 后端 `160 passed`；Django check、migration check、`uv lock --check`、`uv build`、compileall、Compose config、前端 typecheck/build 通过；locmem 邮件流程覆盖两种 HTTP adapter；临时数据库真实 PTY 密码恢复通过；真实 SMTP 投递、生产部署及 Heyue stable 更新尚未验收 |
+| `0.1.0` | GitHub Latest Release 已发布；标签/生产提交 `3172ed1` | 2026-11-16 | SQLite 幂等增加三张恢复表，原有业务记录保持；旧代码对加表库回退兼容已演练 | 核心拆分兼容旧导入；增加邮箱恢复，代理 HTTPS 判定收紧；发行及匿名下载契约兼容 | 后端167、前端73、CI/CD、真实S3隔离发布回退、生产升级与公网资产摘要通过；SMTP未配置，真实邮件投递待验收 |
 
-## 0.1.0 集成候选（2026-11-16）
+## 0.1.0 正式发行（2026-11-16）
 
 - 合并核心模块拆分与邮箱账号/验证码找回、主机密码恢复工具，保留旧 `core` 导入和发行 API 契约。
 - 修复代理请求误用本机初始化例外、密码恢复页异步竞态、容器密钥注入及 `/releases/` 下载代理；新增前端业务测试与产品版本 CI 检查。
 - 数据库只幂等增加找回验证码、限速、安全事件表；旧账号、密码哈希、发行与渠道指针保持兼容。应用回退不删除新增表。
-- 本轮后端 `167 tests / OK`、前端 `73 passed`、指定 Node 22.18.0 构建、Django/锁文件/打包通过；真实 S3 独立前缀发布、HEAD/GET、幂等、冲突、回退通过，生产渠道指针不变。SMTP 未配置、真实投递未验收；精确提交 CI 与生产部署待单独记录。
+- 本轮后端 `167 tests / OK`、前端 `73 passed`、指定 Node 22.18.0 构建、Django/锁文件/打包通过；真实 S3 独立前缀发布、HEAD/GET、幂等、冲突、回退通过，生产渠道指针不变。SMTP 未配置、真实投递未验收；精确提交 CI `43745268674`、CD `43745536296` 和生产升级通过，公网登录/恢复入口及 Heyue 1.0.24 完整资产摘要读回通过。
 
 ## 0.0.2 变更
 
