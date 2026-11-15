@@ -116,7 +116,7 @@ class AuthenticationAdapterTests(unittest.TestCase):
         from fuwu_service.server import ApiHandler
 
         handler = SimpleNamespace(
-            client_address=("192.0.2.10", 12345),
+            client_address=("127.0.0.1", 12345),
             headers={"X-Forwarded-Proto": "https"},
             connection=object(),
         )
@@ -126,6 +126,48 @@ class AuthenticationAdapterTests(unittest.TestCase):
             self.assertTrue(ApiHandler._request_is_secure(handler))
             handler.headers["X-Forwarded-Proto"] = "https, http"
             self.assertFalse(ApiHandler._request_is_secure(handler))
+            handler.headers = {"X-Forwarded-For": "203.0.113.10"}
+            self.assertFalse(ApiHandler._request_is_secure(handler))
+        handler.headers = {}
+        self.assertTrue(ApiHandler._request_is_secure(handler))
+
+    def test_django_adapter_requires_trusted_forwarded_protocol_even_on_loopback(self) -> None:
+        response = self.django.generic(
+            "POST", "/api/auth/password-reset/code",
+            data=json.dumps({"email": "missing@example.test"}), content_type="application/json",
+            REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_PROTO="http",
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["code"], "secure_transport_required")
+
+        with override_settings(SECURE_PROXY_SSL_HEADER=("HTTP_X_FORWARDED_PROTO", "https")):
+            response = self.django.generic(
+                "POST", "/api/auth/password-reset/code",
+                data=json.dumps({"email": "missing@example.test"}), content_type="application/json",
+                REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_PROTO="https",
+            )
+            self.assertEqual(response.status_code, 200)
+
+            response = self.django.generic(
+                "POST", "/api/auth/password-reset/code",
+                data=json.dumps({"email": "missing@example.test"}), content_type="application/json",
+                REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_PROTO="http, https",
+            )
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["code"], "secure_transport_required")
+
+    def test_default_django_secret_key_rejects_password_reset_on_both_adapters(self) -> None:
+        store = get_account_store(Path(self.directory.name) / "django.sqlite3")
+        admin = store.bootstrap_superadmin("reset-key-admin", "Old-Account-Password-2026")
+        store.set_superadmin_email(admin["username"], "reset-key-admin@example.test")
+        with patch.object(settings, "SECRET_KEY", "fuwu-local-development-key"):
+            for adapter in ["django", "http"]:
+                with self.subTest(adapter=adapter):
+                    status, response, _ = self.request(adapter, "POST", "/api/auth/password-reset/code", {
+                        "email": "reset-key-admin@example.test",
+                    })
+                    self.assertEqual(status, 503)
+                    self.assertEqual(response["code"], "email_reset_unavailable")
 
     def test_password_reset_rejects_public_http_requests(self) -> None:
         requests = [

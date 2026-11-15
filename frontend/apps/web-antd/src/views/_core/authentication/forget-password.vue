@@ -16,6 +16,7 @@ const form = reactive({ email: '', code: '', newPassword: '', confirmPassword: '
 const sendingCode = ref(false);
 const resetting = ref(false);
 const cooldown = ref(0);
+let pageDisposed = false;
 let cooldownTimer: ReturnType<typeof setInterval> | undefined;
 
 function validEmail(value: string) {
@@ -23,16 +24,16 @@ function validEmail(value: string) {
 }
 
 async function sendCode() {
+  if (pageDisposed || cooldown.value > 0 || sendingCode.value) return;
   const email = form.email.trim().toLowerCase();
   if (!validEmail(email)) {
     message.warning('请输入有效的邮箱地址');
     return;
   }
-  if (cooldown.value > 0 || sendingCode.value) return;
-
   sendingCode.value = true;
   try {
     await requestPasswordResetCodeApi({ email });
+    if (pageDisposed) return;
     message.success('如果该邮箱对应有效账号，验证码将发送至该邮箱');
     cooldown.value = 60;
     cooldownTimer = setInterval(() => {
@@ -43,13 +44,14 @@ async function sendCode() {
       }
     }, 1000);
   } catch {
-    message.error('验证码发送失败，请稍后重试');
+    if (!pageDisposed) message.error('验证码发送失败，请稍后重试');
   } finally {
-    sendingCode.value = false;
+    if (!pageDisposed) sendingCode.value = false;
   }
 }
 
 async function submit() {
+  if (pageDisposed || resetting.value) return;
   const email = form.email.trim().toLowerCase();
   if (!validEmail(email)) {
     message.warning('请输入有效的邮箱地址');
@@ -75,19 +77,21 @@ async function submit() {
       code: form.code.trim(),
       newPassword: form.newPassword,
     });
+    if (pageDisposed) return;
     form.newPassword = '';
     form.confirmPassword = '';
     form.code = '';
     message.success('密码已重置，请使用新密码登录');
     await router.push('/auth/login');
   } catch {
-    message.error('密码重置失败，请检查验证码或稍后重试');
+    if (!pageDisposed) message.error('密码重置失败，请检查验证码或稍后重试');
   } finally {
-    resetting.value = false;
+    if (!pageDisposed) resetting.value = false;
   }
 }
 
 onUnmounted(() => {
+  pageDisposed = true;
   if (cooldownTimer) clearInterval(cooldownTimer);
 });
 </script>

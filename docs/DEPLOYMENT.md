@@ -66,14 +66,15 @@ EMAIL_HOST=smtp.example.com
 EMAIL_PORT=587
 EMAIL_HOST_USER=service@example.com
 EMAIL_HOST_PASSWORD=由部署环境安全注入
+EMAIL_TIMEOUT=10
 EMAIL_USE_TLS=true
 EMAIL_USE_SSL=false
 DEFAULT_FROM_EMAIL=Fuwu <service@example.com>
 ```
 
-不要将真实 SMTP 密码写入仓库、镜像或聊天。使用 STARTTLS 时设置 `EMAIL_USE_TLS=true`；使用隐式 SSL 时设置 `EMAIL_USE_SSL=true` 且关闭 TLS。修改 `.env` 后重建或重启 API 容器以加载配置。生产必须同时配置强随机 `DJANGO_SECRET_KEY`，它用于验证码摘要保护；项目内置的开发密钥会被拒绝，轮换已配置的密钥会使尚未使用的验证码失效。
+不要将真实 SMTP 密码写入仓库、镜像或聊天。使用 STARTTLS 时设置 `EMAIL_USE_TLS=true`；使用隐式 SSL 时设置 `EMAIL_USE_SSL=true` 且关闭 TLS。修改 `.env` 后重建或重启 API 容器以加载配置。生产必须同时配置强随机、至少 32 字符的 `DJANGO_SECRET_KEY`，它用于验证码摘要保护；Compose 启动脚本会拒绝开发占位密钥或过短值，轮换已配置的密钥会使尚未使用的验证码失效。
 
-找回密码 POST 接口只接受 HTTPS 或 loopback 请求。若 TLS 在反向代理终止，只有当可信代理会覆盖 `X-Forwarded-Proto` 时才在 `.env` 设置 `FUWU_TRUST_X_FORWARDED_PROTO=1`；轻量服务和 Django 适配器会据此识别反代 HTTPS。不要在可绕过可信代理直连的部署中开启此项。
+找回密码 POST 接口只接受 HTTPS 或 loopback 请求。Compose 默认只将前端和 API 宿主端口绑定到 `127.0.0.1`，由宿主机 TLS 入口转发至前端 Nginx。配置外层 TLS 代理时，先确认 Nginx 实际看到的代理地址，再将精确地址或 CIDR 写入 `FUWU_TRUSTED_PROXY_CIDRS`。Nginx 只对这些来源读取精确的 `http` 或 `https` `X-Forwarded-Proto` 值；未列入的来源、逗号拼接值和其他输入均按内层 `$scheme` 处理。TLS 入口必须覆盖传入头，不能追加用户提供的值。默认 `FUWU_TRUST_X_FORWARDED_PROTO=0` 不信任协议头；只在完成入口 allowlist 与 Docker 网络隔离后显式设为 `1`，让后端识别前端 Nginx 已净化的 HTTPS 头。若 API 可被其他网络客户端直连，应先修复网络隔离。不要将不受信任的容器加入 API 所在网络。
 
 已有管理员账号可由服务器操作员在本机把唯一活跃超级管理员的用户名改为其可访问的邮箱。该命令不要求知道旧管理员密码，但需能登录服务主机，并要求确认当前账号名和目标邮箱：
 
@@ -140,7 +141,9 @@ docker compose ps
 docker compose exec api uv run --frozen --no-dev python -m fuwu_service.accounts bootstrap --database /data/fuwu.sqlite3
 ```
 
-默认前端端口为 `3331`，API 宿主端口为 `8088`，容器内部端口为 `8000`，数据存于 Compose 命名卷。API 容器同时挂载受保护的 secrets 目录，只读。对外提供服务时，应使用 HTTPS 反向代理并将管理 API 限制在可信网络内。
+默认前端端口为 `3331`，API 宿主端口为 `8088`，容器内部端口为 `8000`，数据存于 Compose 命名卷。默认两个端口只绑定回环地址。API 容器同时挂载受保护的 secrets 目录，只读。对外提供服务时，应使用 HTTPS 反向代理并将管理 API 限制在可信网络内。
+
+前端 Nginx 除 `/api/` 外还会将 `/releases/` 原路径代理给 API，并关闭下载代理缓冲。必须从最终公开 HTTPS 域名检查 `/releases/{key}` 与 `/api/downloads/{project}/{version}/{filename}` 的状态、`Content-Type`、`Content-Length`、`Cache-Control` 和 `X-Fuwu-SHA256`；未知发行路径应返回 404，不能回退到管理页面 HTML。
 
 ### GitHub 账号授权应该在系统设置里完成
 
@@ -173,4 +176,6 @@ uv run --frozen python manage.py migrate --plan
 uv run --frozen --extra dev pytest
 ```
 
-以上是本地代码检查。真实对象存储访问、生产数据库迁移、容器外部可达性及匿名客户端下载应分别保存验收记录。
+运行 `python3 scripts/check_deployment.py` 可在不发布宿主端口的临时 Docker 网络中检查随附 Nginx 配置、下载路由头部、HEAD/GET 行为以及可信代理 scheme 处理；该脚本使用 mock API 和临时 TLS 证书，不连接生产系统。构建 API 镜像后，加 `--api-image fuwu-api:0.1.0-acceptance` 会再用真实 API 和全新临时 SQLite 验证：HTTP 和伪造协议头被拒绝，可信 HTTPS 链路可以调用找回接口。测试使用未登记邮箱，不发送邮件。
+
+该隔离链路测试不能代替真实入口、SMTP、S3、生产数据库备份或匿名客户端下载验收，后者必须分别保存证据。Docker 构建上下文排除了 `.env`、`secrets/`、`data/`、staging、数据库、备份和生成归档，不应把运行配置打入镜像。

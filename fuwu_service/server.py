@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import ipaddress
 import logging
 import mimetypes
 import os
@@ -30,6 +29,7 @@ from .rbac import RBAC
 from .release_service import ReleaseService
 from .repository import SQLiteRepository
 from .storage_settings import build_managed_store
+from .transport import is_secure_transport
 
 
 # 配置日志格式
@@ -218,16 +218,13 @@ class ApiHandler(BaseHTTPRequestHandler):
                 close()
 
     def _request_is_secure(self) -> bool:
-        try:
-            if ipaddress.ip_address(self.client_address[0]).is_loopback:
-                return True
-        except (ValueError, IndexError):
-            pass
-        if os.environ.get("FUWU_TRUST_X_FORWARDED_PROTO", "").strip().casefold() in {"1", "true", "yes", "on"}:
-            forwarded_proto = self.headers.get("X-Forwarded-Proto", "").rsplit(",", 1)[-1].strip().casefold()
-            if forwarded_proto == "https":
-                return True
-        return isinstance(self.connection, ssl.SSLSocket)
+        return is_secure_transport(
+            self.client_address[0] if self.client_address else "",
+            self.headers,
+            tls=isinstance(self.connection, ssl.SSLSocket),
+            trust_forwarded_proto=os.environ.get("FUWU_TRUST_X_FORWARDED_PROTO", "").strip().casefold()
+            in {"1", "true", "yes", "on"},
+        )
 
     def _dispatch(self) -> None:
         header_request_id = self.headers.get("Idempotency-Key") or self.headers.get("X-Request-ID")

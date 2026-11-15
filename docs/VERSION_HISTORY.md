@@ -16,6 +16,13 @@
 | `0.0.9` | GitHub Release 与生产部署已完成；生产 revision `6271b07` | 2026-11-10 | 保持 SQLite；无数据迁移 | 托管项目发行版本接受完整三段 SemVer；latest GitHub Release 改为 `release.storage.read` 只读权限；新增受 `release.storage.publish` 保护的 `/api/release-storage/sync-latest`，自动发现、暂存、校验并发布新正式版，避免降级和同版本覆盖 | 后端 `139 passed`、96 subtests，Django check、迁移漂移检查、前端 focused Vitest `28 passed`、typecheck 和生产构建通过；本地内存存储真实自动发布与制品 SHA256 校验通过；生产健康检查通过，但生产自动同步写入验收待完成 |
 | `0.1.0` | 本地候选；未打 tag、未创建 Release、未部署 | 2026-11-11 | 账号 SQLite 初始化会幂等创建验证码、限速与安全事件表；既有账号行和密码哈希不变 | 账号名支持邮箱且保留旧用户名；新增邮件验证码自助重置密码端点；SMTP 只从部署环境读取；提供服务器本机绑定管理员邮箱及隐藏输入密码恢复命令 | 后端 `160 passed`；Django check、migration check、`uv lock --check`、`uv build`、compileall、Compose config、前端 typecheck/build 通过；locmem 邮件流程覆盖两种 HTTP adapter；临时数据库真实 PTY 密码恢复通过；真实 SMTP 投递、生产部署及 Heyue stable 更新尚未验收 |
 
+## 0.1.0 集成候选（2026-11-16）
+
+- 合并核心模块拆分与邮箱账号/验证码找回、主机密码恢复工具，保留旧 `core` 导入和发行 API 契约。
+- 修复代理请求误用本机初始化例外、密码恢复页异步竞态、容器密钥注入及 `/releases/` 下载代理；新增前端业务测试与产品版本 CI 检查。
+- 数据库只幂等增加找回验证码、限速、安全事件表；旧账号、密码哈希、发行与渠道指针保持兼容。应用回退不删除新增表。
+- 本轮后端 `167 tests / OK`、前端 `73 passed`、指定 Node 22.18.0 构建、Django/锁文件/打包通过；真实 S3 独立前缀发布、HEAD/GET、幂等、冲突、回退通过，生产渠道指针不变。SMTP 未配置、真实投递未验收；精确提交 CI 与生产部署待单独记录。
+
 ## 0.0.2 变更
 
 - 增加登录会话、角色与直接权限、项目范围控制。

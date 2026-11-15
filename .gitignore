@@ -13,3 +13,11 @@ __pycache__/
 frontend/apps/backend-mock/.env
 .history-*
 .history*
+
+# Generated output is built from the selected release source.
+frontend/apps/*/dist/
+frontend/apps/*/dist.zip
+build/
+dist/
+data/
+.codex-*

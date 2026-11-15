@@ -80,7 +80,7 @@
 
 `POST /api/auth/password-reset/code` 接受 `{ "email": "user@example.com" }`。服务为登记且启用的邮箱发送 10 分钟有效的一次性验证码；不论邮箱是否存在，响应和 HTTP 状态均相同，避免枚举账号。每个邮箱有 60 秒冷却和每小时 3 次发送上限；未知或停用邮箱不会创建限速记录。SMTP 未配置或发送失败时接口仍不泄露账户存在性；运维需通过部署配置确认邮件服务可用。验证码只保存以 `DJANGO_SECRET_KEY` 保护的 HMAC 摘要，不写入操作日志。
 
-`POST /api/auth/password-reset` 接受 `{ "email": "user@example.com", "code": "123456", "newPassword": "..." }`。只有未过期、未使用且未超过 5 次错误尝试的验证码可修改密码；成功后验证码作废并撤销该账号全部会话。新密码沿用 12 至 256 字符限制。请求体、邮件内容、验证码和新密码不会进入操作日志。两个密码找回接口都仅允许 HTTPS 或 loopback 请求；非 loopback HTTP 请求返回 `400 secure_transport_required`。生产必须设置随机 `DJANGO_SECRET_KEY`；开发默认密钥下找回功能拒绝运行。
+`POST /api/auth/password-reset` 接受 `{ "email": "user@example.com", "code": "123456", "newPassword": "..." }`。只有未过期、未使用且未超过 5 次错误尝试的验证码可修改密码；成功后验证码作废并撤销该账号全部会话。新密码沿用 12 至 256 字符限制。请求体、邮件内容、验证码和新密码不会进入操作日志。两个密码找回接口仅允许直接 HTTPS、无代理头的 loopback 初始化请求，或显式配置可信代理并收到单一 `X-Forwarded-Proto: https` 的请求。带代理头的 loopback 连接不能绕过安全检查；逗号列表、重复协议头、不可信代理和普通 HTTP 请求返回 `400 secure_transport_required`。相同规则适用于对象存储凭据和 GitHub 授权写接口。生产必须设置随机 `DJANGO_SECRET_KEY`；开发默认密钥下找回功能拒绝运行。
 
 更改用户名、角色、直接权限、项目范围、启用状态或密码会撤销该账号现有会话。显示名称变更不会撤销会话。密码修改后需要重新登录。账号对象不包含密码哈希和会话数据；停用账号通过 `PATCH /api/users/{id}` 并设置 `active=false` 完成。
 

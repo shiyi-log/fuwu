@@ -2,11 +2,11 @@
 from __future__ import annotations
 
 import json
-import ipaddress
 import mimetypes
 import os
 from functools import lru_cache
 
+from django.conf import settings
 from django.http import HttpResponse, JsonResponse, StreamingHttpResponse
 from django.views.decorators.csrf import csrf_exempt
 
@@ -22,6 +22,7 @@ from fuwu_service.rbac import RBAC
 from fuwu_service.release_service import ReleaseService
 from fuwu_service.repository import SQLiteRepository
 from fuwu_service.server import build_storage, request_identifier
+from fuwu_service.transport import is_secure_transport
 
 
 @lru_cache(maxsize=1)
@@ -56,14 +57,13 @@ def api_view(request, **_kwargs):
             status, payload = 200, {"status": "ok"}
         else:
             remote_address = request.META.get("REMOTE_ADDR", "")
-            try:
-                loopback = ipaddress.ip_address(remote_address).is_loopback
-            except ValueError:
-                loopback = False
             status, payload = handle_api(get_service(), RBAC.from_env(), method=request.method, path=request.path,
                 query={key: request.GET[key] for key in request.GET}, body=body,
                 authorization=request.headers.get("Authorization"), request_id=request_id,
-                client_id=remote_address or "local", request_secure=request.is_secure() or loopback)
+                client_id=remote_address or "local", request_secure=is_secure_transport(
+                    remote_address, request.headers, tls=request.is_secure(),
+                    trust_forwarded_proto=settings.SECURE_PROXY_SSL_HEADER == ("HTTP_X_FORWARDED_PROTO", "https"),
+                ))
     except ReleaseError as error:
         status, payload = error.status, {"code": error.code, "message": error.message, "request_id": request_id}
     except Exception:

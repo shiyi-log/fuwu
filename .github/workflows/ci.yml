@@ -83,6 +83,9 @@ jobs:
             echo "No Python dependency manifest yet; continuing with the repository baseline."
           fi
 
+      - name: Check product version and release notes
+        run: uv run --frozen python scripts/check_release_version.py
+
       - name: Compile Python sources
         shell: bash
         run: |
@@ -118,6 +121,18 @@ jobs:
             echo "No test suite yet; test execution deferred until the project is initialized."
           fi
 
+  deployment-proxy:
+    name: Nginx download and trusted proxy checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.source_ref || github.sha }}
+
+      - name: Exercise the isolated proxy chain
+        run: python3 scripts/check_deployment.py
+
   frontend-vben:
     name: Vben frontend checks
     runs-on: ubuntu-latest
@@ -143,6 +158,10 @@ jobs:
       - name: Install Vben dependencies
         working-directory: frontend
         run: pnpm install --frozen-lockfile
+
+      - name: Test Fuwu web-antd behavior
+        working-directory: frontend
+        run: pnpm test:fuwu
 
       - name: Typecheck web-antd
         working-directory: frontend

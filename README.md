@@ -35,7 +35,7 @@ export FUWU_SUPERADMIN_PASSWORD='请在部署环境中设置的强密码'
 uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FUWU_DATABASE"
 ```
 
-密码不会写入配置文件、数据库、日志或 API 响应；也可以继续使用上面的交互式 `bootstrap` 命令。健康检查地址为 `http://127.0.0.1:8088/healthz`。本地默认使用 SQLite 和内存对象存储。
+明文密码不会写入配置文件、数据库、日志或 API 响应；也可以继续使用上面的交互式 `bootstrap` 命令。健康检查地址为 `http://127.0.0.1:8088/healthz`。本地默认使用 SQLite 和内存对象存储。
 
 超级管理员登录后可在“账号管理”中注册成员、配置角色/权限和项目范围、停用账号及重置成员密码；成员可在个人资料中使用当前密码修改自己的密码。密码、角色、权限、项目范围和停用状态变更会撤销受影响账号的现有会话。
 
@@ -88,4 +88,6 @@ Compose 可启动 MySQL 与 Redis 服务，但当前业务数据仍保存在 SQL
 - [发行一致性说明](docs/PUBLISH_CONSISTENCY.md)
 - [版本记录](docs/VERSION_HISTORY.md)
 
-CI 检查 Markdown 结构、Python 与 Django、后端测试，以及 Vben 前端类型检查和生产构建。真实对象存储权限、生产部署和外部客户端验收需分别记录，不能由本地测试或镜像健康检查替代。
+CI 检查 Markdown 结构、产品版本一致性、Python 与 Django、后端测试，以及 Vben 前端组件/单元测试、类型检查和生产构建。真实对象存储权限、生产部署和外部客户端验收需分别记录，不能由本地测试或镜像健康检查替代。
+
+正式源码归档不包含预构建的前端 `dist`；从源码部署时运行上述前端生产构建，或使用 Dockerfile 的构建阶段生成。部署应使用与已验证提交一致的前端产物。
