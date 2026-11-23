@@ -286,7 +286,9 @@ class SystemUpdateTests(unittest.TestCase):
                 _require_protected_tree(root)
 
     def test_active_release_tree_allows_root_owned_runtime_symlinks(self):
-        with tempfile.TemporaryDirectory() as temporary:
+        # Linux /tmp is world-writable. The success fixture must have protected
+        # ancestors just like the runtime path accepted in production.
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temporary:
             root = Path(temporary)
             target = root / "python"
             target.write_text("#!/bin/sh\n", encoding="utf-8")
