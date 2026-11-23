@@ -1,5 +1,5 @@
 import type { RouteRecordRaw } from 'vue-router';
-import { Grid, Settings, UserRoundPen } from '@vben/icons';
+import { Grid, RotateCw, Settings, UserRoundPen } from '@vben/icons';
 
 const routes: RouteRecordRaw[] = [
   {
@@ -11,6 +11,11 @@ const routes: RouteRecordRaw[] = [
     name: 'Users', path: '/users',
     component: () => import('#/views/users/index.vue'),
     meta: { title: '账号管理', icon: UserRoundPen, order: 1000 },
+  },
+  {
+    name: 'SystemUpdate', path: '/system-update',
+    component: () => import('#/views/system-update/index.vue'),
+    meta: { title: '系统更新', icon: RotateCw, order: 1005 },
   },
   {
     name: 'Settings', path: '/settings',

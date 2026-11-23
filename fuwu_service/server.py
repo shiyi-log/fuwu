@@ -29,7 +29,7 @@ from .rbac import RBAC
 from .release_service import ReleaseService
 from .repository import SQLiteRepository
 from .storage_settings import build_managed_store
-from .transport import is_secure_transport
+from .transport import is_encrypted_transport, is_secure_transport
 
 
 # 配置日志格式
@@ -226,6 +226,14 @@ class ApiHandler(BaseHTTPRequestHandler):
             in {"1", "true", "yes", "on"},
         )
 
+    def _request_is_https(self) -> bool:
+        return is_encrypted_transport(
+            self.headers,
+            tls=isinstance(self.connection, ssl.SSLSocket),
+            trust_forwarded_proto=os.environ.get("FUWU_TRUST_X_FORWARDED_PROTO", "").strip().casefold()
+            in {"1", "true", "yes", "on"},
+        )
+
     def _dispatch(self) -> None:
         header_request_id = self.headers.get("Idempotency-Key") or self.headers.get("X-Request-ID")
         request_id = request_identifier(header_request_id)
@@ -259,7 +267,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             status, response = handle_api(self.service, self.rbac, method=self.command, path=parsed.path,
                 query={key: values[0] for key, values in parse_qs(parsed.query).items()}, body=body,
                 authorization=self.headers.get("Authorization"), request_id=request_id,
-                client_id=self.client_address[0], request_secure=self._request_is_secure())
+                client_id=self.client_address[0], request_secure=self._request_is_secure(),
+                request_https=self._request_is_https())
         except ReleaseError as error:
             status, response = error.status, {"code": error.code, "message": error.message, "request_id": request_id}
         except Exception:

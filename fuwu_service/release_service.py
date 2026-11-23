@@ -6,6 +6,7 @@ import json
 import mimetypes
 import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from io import BytesIO
 from pathlib import Path
 from typing import Any, Mapping
@@ -679,17 +680,38 @@ class ReleaseService:
             project_id = project_value(validate_project_id, project_id)
         if channel is not None:
             channel = validate_channel(channel)
-        result = []
-        for release in self.repository.list_releases(project_id, channel):
-            latest = self.repository.get_latest(release["project_id"], release["channel"])
-            artifacts = self.repository.list_artifacts(release["id"])
-            head_status = "verified"
+        records = self.repository.list_releases(project_id, channel)
+        release_artifacts = [
+            (release, self.repository.list_artifacts(release["id"]))
+            for release in records
+        ]
+
+        def verify_heads(item: tuple[Mapping[str, Any], list[Mapping[str, Any]]]) -> str:
+            release, artifacts = item
+
+            def head(key: str) -> None:
+                if isinstance(self.store, S3ObjectStore):
+                    self.store.head_object(key, timeout=2.0)
+                else:
+                    self.store.head_object(key)
+
             try:
-                self.store.head_object(release["manifest_key"])
+                head(release["manifest_key"])
                 for artifact in artifacts:
-                    self.store.head_object(artifact["object_key"])
+                    head(artifact["object_key"])
             except ReleaseError:
-                head_status = "unverified"
+                return "unverified"
+            return "verified"
+
+        if release_artifacts:
+            with ThreadPoolExecutor(max_workers=min(16, len(release_artifacts))) as executor:
+                head_statuses = list(executor.map(verify_heads, release_artifacts))
+        else:
+            head_statuses = []
+
+        result = []
+        for (release, artifacts), head_status in zip(release_artifacts, head_statuses, strict=True):
+            latest = self.repository.get_latest(release["project_id"], release["channel"])
             result.append({**self._public_release(release), "latest": bool(latest and latest["release_pk"] == release["id"]), "objectHeadStatus": head_status, "artifacts": [{"name": artifact["name"], "key": artifact["object_key"], "size": artifact["size"], "sha256": artifact["sha256"]} for artifact in artifacts]})
         return result
 

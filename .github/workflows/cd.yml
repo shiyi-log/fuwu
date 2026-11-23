@@ -30,6 +30,7 @@ jobs:
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
       release_tag: ${{ steps.source.outputs.release_tag }}
+      release_version: ${{ steps.source.outputs.release_version }}
     permissions:
       contents: read
     steps:
@@ -49,17 +50,19 @@ jobs:
           set -euo pipefail
           source_sha=$(git rev-parse --verify 'HEAD^{commit}')
           [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]] || { echo "Source must resolve to an exact 40-character commit SHA." >&2; exit 1; }
+          version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          [[ "$version" =~ ^[0-9]\.[0-9]\.[0-9]$ ]] || { echo "Source project.version must use three single-digit numeric components." >&2; exit 1; }
           release_tag=""
           if [[ "$SHOULD_PUBLISH" == "true" ]]; then
             release_tag="${REQUESTED_REF#refs/tags/}"
             [[ "$release_tag" =~ ^v[0-9]\.[0-9]\.[0-9]$ ]] || { echo "Publishing requires an existing tag such as v0.0.1." >&2; exit 1; }
             tag_sha=$(git rev-parse --verify "refs/tags/${release_tag}^{commit}")
             [[ "$tag_sha" == "$source_sha" ]] || { echo "The release tag must identify the selected source commit." >&2; exit 1; }
-            version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
             [[ "$release_tag" == "v$version" ]] || { echo "The release tag must match pyproject.toml project.version." >&2; exit 1; }
           fi
           echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
+          echo "release_version=$version" >> "$GITHUB_OUTPUT"
 
   ci-status:
     name: Find successful CI for the exact source
@@ -131,7 +134,7 @@ jobs:
       contents: read
 
   package:
-    name: Package source
+    name: Package source and online update bundle
     needs: [resolve, ci-status, verify]
     if: >-
       always() &&
@@ -147,7 +150,22 @@ jobs:
           ref: ${{ needs.resolve.outputs.source_sha }}
           fetch-depth: 0
 
-      - name: Build source archive and checksums
+      - name: Set up pnpm for the release update bundle
+        if: needs.resolve.outputs.release_tag != ''
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+          run_install: false
+
+      - name: Set up Node.js for the release update bundle
+        if: needs.resolve.outputs.release_tag != ''
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.18.0
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Build source archive
         env:
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
         shell: bash
@@ -158,6 +176,35 @@ jobs:
           archive="dist/fuwu-${SOURCE_SHA}.tar.gz"
           git archive --format=tar.gz --output="$archive" "$SOURCE_SHA"
           (cd dist && sha256sum "$(basename "$archive")" > SHA256SUMS)
+
+      - name: Build complete online update bundle
+        if: needs.resolve.outputs.release_tag != ''
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.resolve.outputs.release_version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
+          [[ "$RELEASE_TAG" == "v$RELEASE_VERSION" ]]
+          update_dir="$(mktemp -d)"
+          python3 scripts/build_update_bundle.py \
+            --source-sha "$SOURCE_SHA" \
+            --version "$RELEASE_VERSION" \
+            --tag "$RELEASE_TAG" \
+            --output-dir "$update_dir"
+          update_archive="fuwu-update-${RELEASE_VERSION}.tar.gz"
+          source_archive="fuwu-${SOURCE_SHA}.tar.gz"
+          cp "$update_dir/$update_archive" dist/
+          cat "$update_dir/SHA256SUMS" >> dist/SHA256SUMS
+          rm -rf "$update_dir"
+          (cd dist && sha256sum --check SHA256SUMS)
+          source_hash=$(sha256sum "dist/$source_archive" | cut -d ' ' -f 1)
+          update_hash=$(sha256sum "dist/$update_archive" | cut -d ' ' -f 1)
+          [[ "$(wc -l < dist/SHA256SUMS | tr -d ' ')" == "2" ]]
+          grep -Fxq "$source_hash  $source_archive" dist/SHA256SUMS
+          grep -Fxq "$update_hash  $update_archive" dist/SHA256SUMS
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
@@ -198,14 +245,26 @@ jobs:
         env:
           SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
           RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          RELEASE_VERSION: ${{ needs.resolve.outputs.release_version }}
         shell: bash
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$SOURCE_SHA" ]]
-          [[ "$RELEASE_TAG" =~ ^v[0-9]\.[0-9]\.[0-9]$ ]]
+          [[ "$RELEASE_VERSION" =~ ^[0-9]\.[0-9]\.[0-9]$ ]]
+          [[ "$RELEASE_TAG" == "v$RELEASE_VERSION" ]]
           [[ "$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")" == "$SOURCE_SHA" ]]
+          source_version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          [[ "$source_version" == "$RELEASE_VERSION" ]]
           test -f "dist/fuwu-${SOURCE_SHA}.tar.gz"
           (cd dist && sha256sum --check SHA256SUMS)
+          update_archive="fuwu-update-${RELEASE_VERSION}.tar.gz"
+          source_archive="fuwu-${SOURCE_SHA}.tar.gz"
+          test -f "dist/$update_archive"
+          source_hash=$(sha256sum "dist/$source_archive" | cut -d ' ' -f 1)
+          update_hash=$(sha256sum "dist/$update_archive" | cut -d ' ' -f 1)
+          [[ "$(wc -l < dist/SHA256SUMS | tr -d ' ')" == "2" ]]
+          grep -Fxq "$source_hash  $source_archive" dist/SHA256SUMS
+          grep -Fxq "$update_hash  $update_archive" dist/SHA256SUMS
 
       - name: Create GitHub Release
         env:

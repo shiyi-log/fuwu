@@ -42,7 +42,10 @@ async function generateAccess(options: GenerateMenuAndRoutesOptions) {
   // a removed project cannot leave stale navigation or client-side routes.
   const root = options.router.getRoutes().find((route) => route.name === 'Root');
   if (root) root.children.length = 0;
-  const routes = options.routes.filter((route) => route.name !== 'Users' || codes.includes('users.manage'));
+  const routes = options.routes.filter((route) =>
+    (route.name !== 'Users' || codes.includes('users.manage')) &&
+    (route.name !== 'SystemUpdate' || codes.includes('fuwu.update.manage')),
+  );
   return generateAccessible('frontend', {
     ...options, routes: [...routes, ...projectRoutes],
     forbiddenComponent: () => import('#/views/_core/fallback/forbidden.vue'),

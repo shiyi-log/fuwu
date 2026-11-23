@@ -34,6 +34,81 @@ uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FU
 
 该命令只允许在空账号库中创建一次超级管理员；成员注册、停用和密码重置由登录后的超级管理员在“账号管理”页面执行，接口权限为 `users.manage`。
 
+### Fuwu 在线更新包
+
+管理台“系统更新”页面由 `fuwu.update.manage` 权限保护。页面用 `GET /api/system-update` 检查最新正式 Release；确认后通过 HTTPS `POST /api/system-update` 提交版本 tag，并轮询 `/api/system-update/jobs/{jobId}` 显示下载、校验、备份、切换、重启及健康检查状态。每个正式 GitHub Release 包含由同一 `SOURCE_SHA` 构建的 `fuwu-update-X.Y.Z.tar.gz`，以及列出源码包和更新包摘要的 `SHA256SUMS`。更新包根目录固定包含 `fuwu-update.json`、`.python-version`、`manage.py`、`pyproject.toml`、`uv.lock`、`config/`、`fuwu_service/`、`release_api/` 和构建后的 `frontend/apps/web-antd/dist/`；清单中的 `formatVersion=1`、`project=fuwu`、`version`、`tag`、`revision` 必须分别与 Release 及精确提交一致。
+
+首次在线安装前必须由宿主操作员完成一次 bootstrap。旧的直接运行方式不会自动变成可更新安装：更新器只接受 root 所有、受保护的版本目录、有效 `current` 链接、经 `current` 路由到活动版本的 Nginx `dist` 链接，以及已运行的 `fuwu-server.service`。在线更新 worker 以 root systemd transient unit 运行，只接收固定安装根目录、绝对数据库路径、服务端口及系统工具路径，不导入应用 `.env` 中的密钥。生产 bootstrap 应先保存旧源码、构建后的静态资源、Nginx 配置与 SQLite 一致性快照，再按以下布局迁移；`.env`、`fuwu.config.json`、数据库、staging、logs 和 secrets 必须留在版本目录之外：
+
+```text
+/www/wwwroot/fuwu/
+  .env
+  fuwu.config.json
+  fuwu.sqlite3
+  staging/
+  logs/
+  data/
+  releases/
+    v0.1.0/
+    v0.1.1/
+  current -> /www/wwwroot/fuwu/releases/v0.1.1
+  frontend/apps/web-antd/dist -> /www/wwwroot/fuwu/current/frontend/apps/web-antd/dist
+```
+
+`fuwu-server.service` 应由 root 管理，工作目录使用稳定路径 `/www/wwwroot/fuwu`，并启动 `/www/wwwroot/fuwu/current/.venv/bin/fuwu-server`。服务环境必须明确设置 `FUWU_INSTALL_ROOT=/www/wwwroot/fuwu`、`FUWU_DATABASE=/www/wwwroot/fuwu/fuwu.sqlite3`、`FUWU_STAGING_DIR=/www/wwwroot/fuwu/staging` 和 `FUWU_CONFIG_FILE=/www/wwwroot/fuwu/fuwu.config.json`；保留现有 `.env` 供应用密钥配置使用，并读回 `systemctl show` 确认这些路径与服务配置一致。配置中的相对 GitHub 凭据路径默认相对源码根解析，因此还应将 `FUWU_GITHUB_CREDENTIALS_FILE` 固定为现有受保护凭据文件的绝对路径，避免切换版本后丢失全局授权。Nginx 静态目录必须跟随 `current` 链接，否则 Python 服务切换后前端仍可能留在旧版本。bootstrap 需短暂停服完成接管；启用前读回服务版本、登录/API、静态资源、SQLite `PRAGMA integrity_check` 和 systemd 开机启动状态。之后每次在线更新会在 `data/backups/` 创建权限为 `0700` 的备份目录和权限为 `0600` 的 SQLite 一致性备份；更新器不替换 `.env`、根配置、凭据、数据库、staging 或日志。
+
+bootstrap 按以下顺序执行，每一步都保留读回结果：
+
+1. 记录当前进程的启动方式、端口与源码 revision；在权限为 `0700` 的备份目录保存旧源码、静态目录、配置和 Nginx vhost，用 SQLite backup API 创建权限为 `0600` 的一致性快照并验证 `PRAGMA integrity_check`。
+2. 将校验过摘要和清单的更新包解到最终版本路径，在该路径运行 `uv sync --frozen --no-dev --project <版本目录> --python <Python 3.14 绝对路径>`。检查版本目录及其文件由 root 所有、不可由组或其他用户写入；依赖准备成功后再停旧进程。
+3. 备份后将原静态目录替换为经过 `current` 的链接，原子建立 `current`，安装下述 systemd 单元并执行 `systemctl daemon-reload`、`systemctl enable --now fuwu-server.service`。Nginx 配置如有变化，使用实际运行的 Nginx 二进制先检查配置，再重载。
+4. 读回 `systemctl show` 的工作目录、启动命令和非机密固定路径，确认服务为 active 且已启用开机启动；检查本机 `/healthz` 的版本、公开 HTTPS 登录页和 API、前端静态资源及数据库完整性。
+
+示例 `/etc/systemd/system/fuwu-server.service` 如下；安装根、端口和工具路径应与宿主实际环境一致。`.env` 继续保存现有应用配置。systemd 的 `EnvironmentFile` 会覆盖同名 `Environment` 项，迁移前应核对 `.env` 中的固定路径、Host 和 Port 与单元一致，或移除这些同名项，并在启动后读回实际生效值：
+
+```ini
+[Unit]
+Description=Fuwu release service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/www/wwwroot/fuwu
+EnvironmentFile=-/www/wwwroot/fuwu/.env
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Environment=FUWU_INSTALL_ROOT=/www/wwwroot/fuwu
+Environment=FUWU_DATABASE=/www/wwwroot/fuwu/fuwu.sqlite3
+Environment=FUWU_STAGING_DIR=/www/wwwroot/fuwu/staging
+Environment=FUWU_CONFIG_FILE=/www/wwwroot/fuwu/fuwu.config.json
+Environment=FUWU_GITHUB_CREDENTIALS_FILE=/www/wwwroot/fuwu/secrets/github_accounts.json
+Environment=FUWU_HOST=127.0.0.1
+Environment=FUWU_PORT=8088
+ExecStart=/www/wwwroot/fuwu/current/.venv/bin/fuwu-server
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+bootstrap 验收失败时，先停新 systemd 服务，恢复保存的静态目录、Nginx 配置和旧启动方式，再验证原服务与数据；只在确认数据库被变更且需要恢复时，停服后使用一致性快照恢复数据库。旧版源码的人工恢复副本可能没有 `fuwu-update.json`，应按原启动方式恢复，不能视为在线更新器可接受的活动 release，也不能据此宣称完成了在线更新的自动回滚验收。
+
+本地可以在已检出的目标提交上复现包构建和摘要校验（需要 Python 3.14、Node.js 22.18.0、pnpm 10.33.0，并能访问前端依赖镜像）：
+
+```bash
+SOURCE_SHA="$(git rev-parse HEAD)"
+VERSION="$(uv run --frozen python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+python3 scripts/build_update_bundle.py \
+  --source-sha "$SOURCE_SHA" \
+  --version "$VERSION" \
+  --tag "v$VERSION" \
+  --output-dir dist/update
+(cd dist/update && sha256sum --check SHA256SUMS)
+```
+
+服务通过独立 transient worker 下载并校验 GitHub `SHA256SUMS`、更新包摘要及 `fuwu-update.json`，SQLite backup API 先创建一致性备份；依赖安装在新版本目录完成后，worker 原子切换 `current`，通过 `systemctl restart fuwu-server.service` 重启并检查 `/healthz` 中的版本。切换后的重启或健康检查失败会恢复旧 `current` 并再次验证；切换前失败保留旧版本。HTTP 进程不覆盖自身正在运行的源码。数据库结构迁移不由更新器自动猜测或回滚，版本若引入非兼容 schema 变化须另行制定迁移策略。
+
 ### 服务器本机修改或恢复密码
 
 服务器操作员可在交互终端运行密码恢复脚本，无需旧密码或 SMTP。使用运行中服务的同一账号数据库，并填写要恢复的邮箱或用户名；省略 `--username` 时会交互询问：

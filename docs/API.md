@@ -28,6 +28,7 @@
 | `users.manage` | 管理账号和密码 |
 | `logs.read` | 查询结构化操作日志 |
 | `settings.manage` | 更新服务设置；管理对象存储凭据还要求超级管理员 |
+| `fuwu.update.manage` | 检查 Fuwu 自身的最新稳定版本 |
 
 渠道固定为 `stable` 与 `beta`。内置角色为 `superadmin`、`release-manager` 与 `viewer`，最终权限由服务端计算。
 
@@ -71,6 +72,9 @@
 | `GET` | `/api/settings` | 已登录 | 200 |
 | `PATCH` | `/api/settings` | `settings.manage` | 200 |
 | `PATCH` | `/api/settings/storage` | `settings.manage`、超级管理员及安全连接 | 200 |
+| `GET` | `/api/system-update` | `fuwu.update.manage` | 200；上游不可用或元数据无效为 502 |
+| `POST` | `/api/system-update` | `fuwu.update.manage`、HTTPS | 202 排队；已在执行、版本过期或非升级为 409；未完成宿主 bootstrap 为 503 |
+| `GET` | `/api/system-update/jobs/{jobId}` | `fuwu.update.manage` | 200；任务不存在为 404 |
 
 ## 登录与账号
 
@@ -110,6 +114,10 @@ GitHub 授权通过系统设置中的 `GET`、`POST`、`DELETE /api/settings/git
 ## 版本与发行查询
 
 托管项目发行版本由三个无前导零的非负整数段组成，例如 `1.0.14`；Git 标签格式为 `v<版本号>`，`revision` 必须是 40 位十六进制 Git SHA。Fuwu 自身的版本进位序列仍按单数字段处理，例如 `0.0.9` 的下一版本为 `0.1.0`。
+
+`GET /api/system-update` 需要 `fuwu.update.manage`，固定查询 `shiyi-log/fuwu` 的 GitHub 最新正式 Release，校验稳定标签和元数据后返回 `currentVersion`、`latestVersion`、`updateAvailable`、`tag`、`publishedAt`、固定格式的 `releaseUrl`、纯文本 `notes` 及白名单资产 `name`、`size`、`digest`。资产下载地址和 Release 返回的任意 URL不会传给前端。`POST /api/system-update` 需要相同权限和 HTTPS，请求体严格为 `{ "tag": "vX.Y.Z" }`；服务端重新确认请求 tag 仍是最新正式版且高于当前版本后，返回 `202 { "job": ... }` 并在独立 systemd transient worker 中执行安装。重复任务、Release 已变化或目标不是升级版本返回 `409`；不安全连接返回 `400`；宿主 bootstrap 未完成或 worker 无法启动返回 `503`。`GET /api/system-update/jobs/{jobId}` 查询 `queued`、`running` 或终态任务；状态包括下载、校验、安装、SQLite 备份、切换、重启、健康检查与回滚阶段。该任务 API 只接受由服务端生成的 32 位小写十六进制 job ID。其他方法返回 `405 method_not_allowed`。
+
+在线安装只在宿主已按部署说明创建受保护的 `releases/`、`current` 版本链接和 `fuwu-server.service` 后可用。worker 固定读取正式 GitHub Release 的 `fuwu-update-X.Y.Z.tar.gz` 与 `SHA256SUMS`，核对 GitHub 资产大小、摘要、归档清单和版本/tag 元数据，再通过 SQLite backup API 创建一致性快照；随后在不可变版本目录准备依赖、原子切换 `current`、重启服务并要求 `/healthz` 返回目标版本。切换后的启动或健康检查失败时会原子恢复旧版本并重新验证健康。切换前的下载或安装失败会保留当前运行版本。应用回滚不删除 SQLite 数据，也不回滚数据库结构；未来若增加非向后兼容的数据迁移，必须另行设计迁移回滚契约。
 
 `GET /api/releases` 支持可选 `project` 和 `channel` 查询参数，发行记录字段使用实际 JSON 命名：`project_id`、`version`、`channel`、`repository`、`tag`、`revision`、`release_id`、`published_at`、`digest`、`manifest_key`、`status`、`latest`、`objectHeadStatus` 和 `artifacts`。`digest` 是规范化 manifest 字节与 `SHA256SUMS` 文件字节拼接后计算的 SHA256，用于识别完整发行输入；各制品另有独立 `sha256`。
 

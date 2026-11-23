@@ -15,7 +15,7 @@ from .errors import ReleaseError
 
 
 class RBAC:
-    PERMISSIONS = {"release.storage.read", "release.storage.publish", "release.storage.rollback", "users.manage", "projects.manage", "logs.read", "settings.manage"}
+    PERMISSIONS = {"release.storage.read", "release.storage.publish", "release.storage.rollback", "users.manage", "projects.manage", "logs.read", "settings.manage", "fuwu.update.manage"}
     SESSION_PREFIX = "fuwu-session-v1."
     SESSION_LIFETIME_SECONDS = 3600
 

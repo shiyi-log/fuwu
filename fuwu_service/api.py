@@ -21,6 +21,7 @@ from .github_auth import (
     verify_github_token,
 )
 from .storage_settings import storage_settings_payload, update_storage_settings
+from .system_update import check_system_update, get_system_update_job, queue_system_update, validate_system_update_tag
 from .version import __version__
 
 
@@ -57,6 +58,7 @@ def requires_generated_request_id(path: str) -> bool:
         "/api/settings/github-authorization/check",
         "/api/release-storage/sync-latest",
         "/api/release-storage/stage-remote",
+        "/api/system-update",
     }
 
 
@@ -94,7 +96,8 @@ def _scoped_status(service: ReleaseService, scope: list[str] | None, project: st
 
 def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
                query: Mapping[str, str], body: Mapping[str, Any], authorization: str | None,
-               request_id: str, client_id: str = "local", request_secure: bool = False) -> tuple[int, dict[str, Any]]:
+               request_id: str, client_id: str = "local", request_secure: bool = False,
+               request_https: bool = False) -> tuple[int, dict[str, Any]]:
     started = time.monotonic()
     if requires_generated_request_id(path):
         request_id = "req-" + secrets.token_hex(12)
@@ -104,7 +107,7 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
     channel: str | None = None
     try:
         if method == "GET" and path == "/healthz":
-            return 200, {"status": "ok"}
+            return 200, {"status": "ok", "version": __version__}
         if path.startswith("/api/auth/"):
             category, action, route = "auth", path.rsplit("/", 1)[-1], path
             if path == "/api/auth/login" and method == "POST":
@@ -322,6 +325,38 @@ def handle_api(service: ReleaseService, rbac: RBAC, *, method: str, path: str,
             elif method == "PATCH":
                 rbac.require(authorization, "settings.manage")
                 code, response = 200, administration_store().update_settings(body, service)
+            else:
+                code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
+        elif match := re.fullmatch(r"/api/system-update/jobs/([0-9a-f]{32})", path):
+            category, action, route = "system", "update_job", "/api/system-update/jobs/{jobId}"
+            rbac.require(authorization, "fuwu.update.manage")
+            if method != "GET":
+                code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
+            else:
+                code, response = 200, {"job": get_system_update_job(match[1])}
+        elif path == "/api/system-update":
+            category, action, route = "system", "check_update", path
+            rbac.require(authorization, "fuwu.update.manage")
+            if method == "GET":
+                code, response = 200, check_system_update(__version__)
+            elif method == "POST":
+                # Preserve the legacy method probe used by older clients;
+                # any real update request still requires HTTPS below.
+                if not body:
+                    code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
+                    return code, response
+                if not request_https:
+                    raise ReleaseError("secure_transport_required", "secure connection is required", 400)
+                if set(body) != {"tag"}:
+                    raise ReleaseError("invalid_system_update_request", "update request is invalid", 422)
+                tag = validate_system_update_tag(body.get("tag"))
+                latest = check_system_update(__version__)
+                if latest.get("tag") != tag:
+                    raise ReleaseError("system_update_not_latest", "requested release is not the current stable release", 409)
+                if not latest.get("updateAvailable"):
+                    raise ReleaseError("system_update_downgrade", "the requested release is not newer", 409)
+                job = queue_system_update(tag, from_version=__version__)
+                code, response = 202, {"job": job}
             else:
                 code, response = 405, {"code": "method_not_allowed", "message": "method is not allowed"}
         elif path == "/api/settings/storage":

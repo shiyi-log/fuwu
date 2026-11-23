@@ -19,6 +19,7 @@ from fuwu_service.administration import administration_store
 from fuwu_service.api import handle_api
 from fuwu_service.core import MemoryObjectStore, RBAC, ReleaseService, SQLiteRepository
 from fuwu_service.server import ApiHandler
+from fuwu_service.transport import is_encrypted_transport
 from fuwu_service import accounts as account_module, administration as administration_module
 
 
@@ -53,14 +54,25 @@ class ManagementApiTests(unittest.TestCase):
             "roles": ["viewer"], "permissions": ["logs.read", "release.storage.read"], "project_ids": ["alpha"]})
         self.rbac = RBAC.from_env()
 
-    def call(self, method, path, *, token=None, body=None, query=None, request_id="api-test", request_secure=False):
+    def call(self, method, path, *, token=None, body=None, query=None, request_id="api-test", request_secure=False, request_https=False):
         return handle_api(self.service, self.rbac, method=method, path=path, query=query or {}, body=body or {},
-            authorization="Bearer " + token if token else None, request_id=request_id, client_id="test-client", request_secure=request_secure)
+            authorization="Bearer " + token if token else None, request_id=request_id, client_id="test-client",
+            request_secure=request_secure, request_https=request_https)
 
     def login(self, username="admin", password="Strong-Admin-Password-2026"):
         status, result = self.call("POST", "/api/auth/login", body={"username": username, "password": password})
         self.assertEqual(status, 200, result)
         return result["data"]["accessToken"]
+
+    def test_encrypted_transport_does_not_treat_loopback_as_https(self):
+        self.assertFalse(is_encrypted_transport({}, tls=False, trust_forwarded_proto=False))
+        self.assertTrue(is_encrypted_transport({}, tls=True, trust_forwarded_proto=False))
+        self.assertTrue(is_encrypted_transport(
+            {"X-Forwarded-Proto": "https"}, tls=False, trust_forwarded_proto=True,
+        ))
+        self.assertFalse(is_encrypted_transport(
+            {"X-Forwarded-Proto": "https"}, tls=False, trust_forwarded_proto=False,
+        ))
 
     def test_account_login_profile_and_logout_revoke_session(self):
         token = self.login()
@@ -71,6 +83,48 @@ class ManagementApiTests(unittest.TestCase):
         self.assertIsNone(profile["data"]["project_ids"])
         self.assertEqual(self.call("POST", "/api/auth/logout", token=token)[0], 200)
         self.assertEqual(self.call("GET", "/api/projects", token=token)[0], 401)
+
+    def test_system_update_check_requires_dedicated_permission(self):
+        admin_token = self.login()
+        reader_token = self.login("reader", "Strong-Reader-Password-2026")
+        result = {
+            "currentVersion": "0.1.0",
+            "latestVersion": "0.1.1",
+            "updateAvailable": True,
+            "tag": "v0.1.1",
+            "publishedAt": "2026-11-23T00:00:00Z",
+            "releaseUrl": "https://github.com/shiyi-log/fuwu/releases/tag/v0.1.1",
+            "notes": "Bug fixes",
+            "assets": [],
+        }
+        with patch("fuwu_service.api.check_system_update", return_value=result) as check:
+            self.assertEqual(self.call("GET", "/api/system-update", token=reader_token)[0], 403)
+            status, response = self.call("GET", "/api/system-update", token=admin_token)
+            self.assertEqual((status, response), (200, result))
+            self.assertEqual(self.call("POST", "/api/system-update", token=admin_token)[0], 405)
+        check.assert_called_once()
+
+    def test_system_update_post_requires_https_but_empty_legacy_probe_stays_405(self):
+        admin_token = self.login()
+        self.assertEqual(self.call("POST", "/api/system-update", token=admin_token)[0], 405)
+        status, result = self.call(
+            "POST", "/api/system-update", token=admin_token, body={"tag": "v0.1.1"},
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(result["code"], "secure_transport_required")
+        with (
+            patch("fuwu_service.api.check_system_update", return_value={
+                "tag": "v0.1.1", "updateAvailable": True,
+            }),
+            patch("fuwu_service.api.queue_system_update", return_value={"jobId": "a" * 32}) as queue,
+        ):
+            status, result = self.call(
+                "POST", "/api/system-update", token=admin_token,
+                body={"tag": "v0.1.1"}, request_https=True,
+            )
+        self.assertEqual(status, 202)
+        self.assertEqual(result["job"]["jobId"], "a" * 32)
+        queue.assert_called_once()
 
     def test_projects_status_logs_and_writes_enforce_account_scope(self):
         token = self.login("reader", "Strong-Reader-Password-2026")

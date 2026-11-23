@@ -35,3 +35,20 @@ def is_secure_transport(
         return ipaddress.ip_address(remote_address).is_loopback
     except ValueError:
         return False
+
+
+def is_encrypted_transport(
+    headers: Mapping[str, str],
+    *,
+    tls: bool,
+    trust_forwarded_proto: bool,
+) -> bool:
+    """Require TLS or one explicitly trusted HTTPS proxy assertion."""
+    if any(headers.get(name) is not None for name in (
+        "X-Forwarded-Proto", "X-Forwarded-For", "Forwarded",
+    )):
+        get_all = getattr(headers, "get_all", None)
+        if callable(get_all) and len(get_all("X-Forwarded-Proto", [])) != 1:
+            return False
+        return trust_forwarded_proto and headers.get("X-Forwarded-Proto", "").strip().casefold() == "https"
+    return tls

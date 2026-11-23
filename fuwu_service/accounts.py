@@ -34,7 +34,7 @@ from .projects import ProjectInputError, validate_project_id
 
 KNOWN_PERMISSIONS = frozenset({
     "release.storage.read", "release.storage.publish", "release.storage.rollback",
-    "users.manage", "projects.manage", "logs.read", "settings.manage",
+    "users.manage", "projects.manage", "logs.read", "settings.manage", "fuwu.update.manage",
 })
 ROLE_CATALOG = {
     "superadmin": {"name": "超级管理员", "permissions": sorted(KNOWN_PERMISSIONS)},

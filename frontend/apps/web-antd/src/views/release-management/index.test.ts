@@ -103,6 +103,17 @@ describe('发行页面自动同步', () => {
     expect(api.getLatestGitHubReleaseApi).not.toHaveBeenCalled(); expect(api.syncLatestGitHubReleaseApi).not.toHaveBeenCalled();
     expect(button('重新读取').disabled).toBe(true);
   });
+  it('keeps successful release panels visible when one request times out', async () => {
+    api.getReleaseListApi.mockRejectedValue({ code: 'ECONNABORTED' });
+    api.getReleaseStorageStatusApi.mockResolvedValue({ provider: 'S3ObjectStore', releases: 16, reachable: true });
+    api.getReleaseAuditApi.mockResolvedValue([{ id: 'audit-1', action: 'publish', project: 'heyue' }]);
+    await mount();
+
+    expect(host.textContent).toContain('版本清单加载超时');
+    expect(host.textContent).toContain('16');
+    expect(host.textContent).toContain('publish');
+    expect(host.textContent).not.toContain('发行数据加载失败，请确认后端服务和访问权限已配置。');
+  });
   it('shows a content conflict without a success message or publication retry', async () => {
     api.syncLatestGitHubReleaseApi.mockRejectedValue({ status: 409, serverCode: 'release_conflict' }); await mount();
     expect(host.textContent).toContain('同一版本在 Fuwu 中存在不同内容，自动发布已停止');

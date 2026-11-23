@@ -15,6 +15,7 @@
 | `0.0.8` | GitHub Release 已发布；标签固定 `468972d` | 2026-10-25 | 保持 SQLite；无数据迁移 | Heyue Shell Bootstrap 将 Python 主体写入受保护临时文件后启动，交互安装器继承调用端 TTY；stable/latest、匿名下载和固定安装 argv 契约保持兼容 | 本地 `133 passed`、94 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python 编译和 PTY 回归通过；生产 revision `468972d`、8088 健康 200、线上 Bootstrap 摘要读回通过；Heyue 测试服务器修复后完整安装待复验 |
 | `0.0.9` | GitHub Release 与生产部署已完成；生产 revision `6271b07` | 2026-11-10 | 保持 SQLite；无数据迁移 | 托管项目发行版本接受完整三段 SemVer；latest GitHub Release 改为 `release.storage.read` 只读权限；新增受 `release.storage.publish` 保护的 `/api/release-storage/sync-latest`，自动发现、暂存、校验并发布新正式版，避免降级和同版本覆盖 | 后端 `139 passed`、96 subtests，Django check、迁移漂移检查、前端 focused Vitest `28 passed`、typecheck 和生产构建通过；本地内存存储真实自动发布与制品 SHA256 校验通过；生产健康检查通过，但生产自动同步写入验收待完成 |
 | `0.1.0` | GitHub Latest Release 已发布；标签/生产提交 `3172ed1` | 2026-11-16 | SQLite 幂等增加三张恢复表，原有业务记录保持；旧代码对加表库回退兼容已演练 | 核心拆分兼容旧导入；增加邮箱恢复，代理 HTTPS 判定收紧；发行及匿名下载契约兼容 | 后端167、前端73、CI/CD、真实S3隔离发布回退、生产升级与公网资产摘要通过；SMTP未配置，真实邮件投递待验收 |
+| `0.1.1` | 本地候选；精确提交、标签、GitHub Release 与生产部署待完成 | 2026-11-23 | 无 schema 迁移；更新前使用 SQLite backup API 创建一致性快照 | 新增受权限保护的自更新检查、安装任务、状态查询、systemd 重启、版本健康检查与失败回滚；既有发行管理 API 保持兼容 | 后端、前端、CI/CD 与生产验收结果待本轮逐项记录；在线安装要求先完成宿主 bootstrap |
 
 ## 0.1.0 正式发行（2026-11-16）
 
@@ -22,6 +23,14 @@
 - 修复代理请求误用本机初始化例外、密码恢复页异步竞态、容器密钥注入及 `/releases/` 下载代理；新增前端业务测试与产品版本 CI 检查。
 - 数据库只幂等增加找回验证码、限速、安全事件表；旧账号、密码哈希、发行与渠道指针保持兼容。应用回退不删除新增表。
 - 本轮后端 `167 tests / OK`、前端 `73 passed`、指定 Node 22.18.0 构建、Django/锁文件/打包通过；真实 S3 独立前缀发布、HEAD/GET、幂等、冲突、回退通过，生产渠道指针不变。SMTP 未配置、真实投递未验收；精确提交 CI `43745268674`、CD `43745536296` 和生产升级通过，公网登录/恢复入口及 Heyue 1.0.24 完整资产摘要读回通过。
+
+## 0.1.1 在线更新候选（2026-11-23）
+
+- 管理台新增受 `fuwu.update.manage` 权限保护的“系统更新”页面；支持查看稳定版、确认并提交更新、轮询持久任务状态，以及页面刷新后恢复任务查询。
+- GitHub Release 工作流从与 tag 一致的精确提交构建完整更新包，包含后端、依赖锁文件和前端静态构建产物；`SHA256SUMS` 同时覆盖源码包和更新包。
+- 后端 updater 固定 GitHub 仓库与正式 Release 契约，校验资产大小、SHA256、归档路径与更新清单；使用独立 systemd transient worker、SQLite 一致性备份、不可变版本目录及原子 `current` 链接切换。
+- 服务重启后要求 `/healthz` 返回目标版本；切换后启动或健康检查失败时恢复旧版本并验证旧版健康。更新器不覆盖 `.env`、SQLite、staging、logs 或 secrets，也不隐式处理非兼容数据库迁移。
+- 生产旧部署由 root 直接启动 `fuwu-server`，启用在线安装前必须完成宿主 bootstrap：建立 root 所有的版本目录和 current 静态资源链接，安装并启动 `fuwu-server.service`，并验证数据库、管理登录、API 与 Nginx 静态内容。标签、Release、CI/CD 与生产部署状态在本候选完成后追加证据，不以本地实现代替实际验收。
 
 ## 0.0.2 变更
 

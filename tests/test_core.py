@@ -4,6 +4,8 @@ import hashlib
 import json
 import os
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -169,6 +171,39 @@ class ReleaseServiceTests(unittest.TestCase):
             service.publish({"project": "fuwu", "version": "0.0.1", "channel": "stable", "staging_ref": self.make_job()}, actor="admin", request_id="req-fail")
         self.assertIsNone(self.repo.get_latest("fuwu", "stable"))
 
+    def test_release_list_verifies_object_heads_concurrently(self) -> None:
+        class ConcurrentStore(MemoryObjectStore):
+            def __init__(self):
+                super().__init__()
+                self.lock = threading.Lock()
+                self.active = 0
+                self.max_active = 0
+
+            def head_object(self, key, *, public=False):
+                with self.lock:
+                    self.active += 1
+                    self.max_active = max(self.max_active, self.active)
+                try:
+                    time.sleep(0.01)
+                    return super().head_object(key, public=public)
+                finally:
+                    with self.lock:
+                        self.active -= 1
+
+        store = ConcurrentStore()
+        service = ReleaseService(self.repo, store, staging_dir=self.staging)
+        for index in range(4):
+            name = f"job-{index}"
+            version = f"0.0.{index + 1}"
+            service.publish({"project": "fuwu", "version": version, "channel": "stable", "staging_ref": self.make_job(name, version=version)}, actor="admin", request_id=f"req-{index}")
+        store.max_active = 0
+
+        releases = service.releases("fuwu", "stable")
+
+        self.assertEqual(len(releases), 4)
+        self.assertTrue(all(release["objectHeadStatus"] == "verified" for release in releases))
+        self.assertGreater(store.max_active, 1)
+
     def test_release_worker_runs_same_service_contract(self) -> None:
         worker = ReleaseWorker(self.service)
         try:
@@ -179,6 +214,13 @@ class ReleaseServiceTests(unittest.TestCase):
 
 
 class SigV4Tests(unittest.TestCase):
+    def test_s3_head_accepts_a_bounded_timeout(self) -> None:
+        store = S3ObjectStore("sample-bucket", credentials=AwsCredentials("AKIDEXAMPLE", "secret-value"), timeout=300)
+        with patch.object(store, "_request", return_value=(200, {"x-amz-meta-sha256": "a" * 64, "Content-Length": "1"}, b"")) as request:
+            store.head_object("releases/sample/v0.0.1/manifest.json", timeout=2.0)
+
+        request.assert_called_once_with("HEAD", "releases/sample/v0.0.1/manifest.json", public=False, timeout=2.0)
+
     def test_sigv4_request_contains_signed_headers_without_secret(self) -> None:
         store = S3ObjectStore("sample-bucket", "us-east-1", credentials=AwsCredentials("AKIDEXAMPLE", "secret-value"))
         request = store._signed_request("PUT", "releases/fuwu/v0.0.1/a.txt", b"hello", sha256=hashlib.sha256(b"hello").hexdigest())

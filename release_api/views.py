@@ -22,7 +22,7 @@ from fuwu_service.rbac import RBAC
 from fuwu_service.release_service import ReleaseService
 from fuwu_service.repository import SQLiteRepository
 from fuwu_service.server import build_storage, request_identifier
-from fuwu_service.transport import is_secure_transport
+from fuwu_service.transport import is_encrypted_transport, is_secure_transport
 
 
 @lru_cache(maxsize=1)
@@ -62,6 +62,9 @@ def api_view(request, **_kwargs):
                 authorization=request.headers.get("Authorization"), request_id=request_id,
                 client_id=remote_address or "local", request_secure=is_secure_transport(
                     remote_address, request.headers, tls=request.is_secure(),
+                    trust_forwarded_proto=settings.SECURE_PROXY_SSL_HEADER == ("HTTP_X_FORWARDED_PROTO", "https"),
+                ), request_https=is_encrypted_transport(
+                    request.headers, tls=request.is_secure(),
                     trust_forwarded_proto=settings.SECURE_PROXY_SSL_HEADER == ("HTTP_X_FORWARDED_PROTO", "https"),
                 ))
     except ReleaseError as error:

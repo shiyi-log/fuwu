@@ -40,7 +40,7 @@ import {
   syncLatestGitHubReleaseApi,
 } from '#/api';
 
-import { isReleaseConflictError } from '#/api/request-errors';
+import { isReleaseConflictError, type SafeRequestError } from '#/api/request-errors';
 import { isStageOutcomeUncertain } from './stage-errors';
 
 const { hasAccessByCodes } = useAccess();
@@ -238,6 +238,22 @@ const auditColumns = [
 ];
 
 let loadRevision = 0;
+function describeLoadFailure(label: string, error: unknown) {
+  const requestError = (
+    typeof error === 'object' && error !== null ? error : {}
+  ) as SafeRequestError;
+  if (requestError.status === 401) return `${label}加载失败：登录已失效 (401)`;
+  if (requestError.status === 403) return `${label}加载失败：没有访问权限 (403)`;
+  if (requestError.status) return `${label}加载失败：服务返回 ${requestError.status}`;
+  if (
+    requestError.code === 'ECONNABORTED' ||
+    requestError.code === 'ETIMEDOUT'
+  ) {
+    return `${label}加载超时`;
+  }
+  return `${label}加载失败：网络或服务暂不可用`;
+}
+
 async function loadData() {
   const revision = ++loadRevision;
   const project = selectedProject.value;
@@ -246,18 +262,30 @@ async function loadData() {
   loading.value = true;
   errorMessage.value = '';
   try {
-    const [releaseData, storageData, auditData] = await Promise.all([
+    const results = await Promise.allSettled([
       getReleaseListApi(project, channel),
       getReleaseStorageStatusApi(project, channel),
       getReleaseAuditApi(project, channel),
     ]);
     if (revision !== loadRevision) return;
-    releases.value = releaseData;
-    storage.value = storageData || {};
-    audits.value = auditData;
-  } catch {
-    if (revision !== loadRevision) return;
-    errorMessage.value = '发行数据加载失败，请确认后端服务和访问权限已配置。';
+    const failures: string[] = [];
+    const [releaseResult, storageResult, auditResult] = results;
+    if (releaseResult.status === 'fulfilled') {
+      releases.value = releaseResult.value;
+    } else {
+      failures.push(describeLoadFailure('版本清单', releaseResult.reason));
+    }
+    if (storageResult.status === 'fulfilled') {
+      storage.value = storageResult.value || {};
+    } else {
+      failures.push(describeLoadFailure('存储状态', storageResult.reason));
+    }
+    if (auditResult.status === 'fulfilled') {
+      audits.value = auditResult.value;
+    } else {
+      failures.push(describeLoadFailure('审计记录', auditResult.reason));
+    }
+    errorMessage.value = failures.join('；');
   } finally {
     if (revision === loadRevision) loading.value = false;
   }

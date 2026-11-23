@@ -262,8 +262,8 @@ class S3ObjectStore:
         _, headers, _ = self._request("PUT", key, body, content_type=content_type, sha256=sha256, cache_control=cache_control, if_none_match=if_none_match, if_match=if_match)
         return {"etag": headers.get("ETag")}
 
-    def head_object(self, key: str, *, public: bool = False) -> dict[str, Any]:
-        _, headers, _ = self._request("HEAD", key, public=public)
+    def head_object(self, key: str, *, public: bool = False, timeout: float | None = None) -> dict[str, Any]:
+        _, headers, _ = self._request("HEAD", key, public=public, timeout=timeout)
         raw_digest = headers.get("x-amz-meta-sha256") or headers.get("x-fuwu-sha256")
         if not raw_digest:
             raise ReleaseError("storage_digest_missing", "storage object digest is unavailable", 502)

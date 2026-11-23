@@ -1,6 +1,28 @@
 # 项目台账
 
-更新时间：2026-11-16
+更新时间：2026-11-23
+
+## 2026-11-23 发行页加载故障诊断
+
+- 生产 `Heyue / stable` 管理读取使用既有管理员会话验证：状态与审计接口均 HTTP 200，约 1.0/1.2 秒；16 条发行的清单接口 HTTP 200，约 7.3 秒，48 个对象 HEAD 串行检查；匿名 stable `latest.json` HTTP 200。生产页面截图中的通用失败提示不能单独证明项目数据为空或权限错误。
+- 本地修复候选将版本、状态、审计加载改为独立落地，失败提示指出对应模块、超时、401/403 或 HTTP 状态；保留请求代次保护以丢弃旧项目/频道响应。
+- 发行列表的 S3 HEAD 改为并发检查（每次最多 16 条发行任务），单个 HEAD 超时上限为 2 秒；外部可替换对象存储接口仍沿用原调用签名。
+- 新增前端部分请求失败回归测试、后端并发 HEAD 与 S3 超时传递测试。此为本地未部署候选，生产改动未经授权或执行；生产真实响应仅作只读诊断，不含认证材料。
+
+## 2026-11-23 Fuwu 自身版本检查入口（历史候选）
+
+- 管理台新增按 `fuwu.update.manage` 权限控制的“系统更新”页面；`GET /api/system-update` 固定读取 `shiyi-log/fuwu` 最新正式 Release，并筛选版本、清理说明文本、限制响应和资产字段，不接受调用方 URL 或命令。
+- 入口只检查并展示当前/最新版本、Release 说明及资产元数据；线上采用直接运行 `fuwu-server`，本次没有宿主更新器、可靠重启和回滚契约，因此不在 Web 进程内覆盖代码，也不执行生产安装或重启。
+- 初始入口只检查版本；随后已扩展为下方 0.1.1 在线安装候选。初始版本检查实现及生产未部署的结论保留作历史，不代表当前工作树能力。
+
+## 2026-11-23 Fuwu 在线更新候选 0.1.1
+
+- 版本字段推进为 `0.1.1`，精确源码提交、`v0.1.1` 标签、GitHub Release、CI/CD 和生产部署仍待本轮验证，不能把候选记作已发布或已上线。
+- 管理台按 `fuwu.update.manage` 提供版本检查、确认后提交安装、任务进度与刷新恢复；后端通过 HTTPS POST 校验最新稳定 tag，并将安装交给独立 systemd transient worker。
+- Release 包由精确 tag 对应提交构建，携带后端、前端 dist、更新清单及 `SHA256SUMS`；worker 校验元数据、下载大小、摘要、归档路径和包内版本后才安装。
+- worker 依次准备新版本目录、创建 SQLite backup API 一致性快照、原子切换 `current`、重启 `fuwu-server.service`，并要求 `/healthz` 返回目标版本；切换后的启动/健康失败时回滚旧链接并验证旧版健康。更新器不替换 `.env`、数据库、staging、logs 或 secrets；无非兼容 schema 迁移。
+- 生产现有 root 直接运行部署尚未具备自动安装目录结构。实际部署前须完成一次受保护宿主 bootstrap，建立版本目录和经 `current` 转发的 Nginx dist 链接，安装启用 systemd 单元，备份 SQLite 并验收登录、关键 API、静态资源与完整性。不得把工作树测试、Release 创建或 SSH 连通性写成生产更新已完成。
+- 2026-11-23 本地候选验证：后端 `188 passed`、`158 subtests passed`；前端 `82 passed`，Vben typecheck 与生产 build 通过；Django check、迁移漂移检查、版本一致性、`uv lock --check`、Python 编译和 `git diff --check` 通过。活动版本权限检查允许受保护的 Python runtime 符号链接，仍拒绝 group/world writable 目标；SQLite 备份目录和文件分别强制 `0700`、`0600`。这些结果不替代精确提交 CI/CD 与生产验收。
 
 ## 项目目标
 
@@ -125,6 +147,7 @@
 | 操作日志 | `GET /api/logs` | `logs.read` 和项目范围 | 结构化操作记录 | 固定查询错误；不记录请求正文或令牌 | `fuwu_service/administration.py`、`tests/test_management_api.py` |
 | 系统设置 | `GET/PATCH /api/settings`、`PATCH /api/settings/storage` | 登录查询；更改需 `settings.manage`；凭据配置还需超级管理员和安全连接 | 通用偏好、非敏感存储目标及服务端凭据配置 | 凭据未进入响应、数据库或日志 | `fuwu_service/storage_settings.py`、`release_api/urls.py`、`tests/test_storage_settings.py` |
 | GitHub 全局授权 | `/api/settings/github-authorization` | `settings.manage`；写操作需安全连接 | 校验 GitHub 账号；只返回安全身份元数据；远端 staging 按项目登记仓库使用该授权 | PAT 不进入数据库、日志或 API 响应；撤销全局授权并清除受保护凭据记录 | `fuwu_service/github_auth.py`、`fuwu_service/api.py`、`tests/test_github_authorization_api.py` |
+| Fuwu 在线更新 | `GET/POST /api/system-update`、`GET /api/system-update/jobs/{jobId}` | `fuwu.update.manage`；POST 还需 HTTPS | 查询最新正式版、提交已确认更新、读取持久任务状态；worker 校验 GitHub 包、备份 SQLite、切换版本、重启并检查版本健康，必要时恢复旧版本 | 固定上游、拒绝重定向、限制响应与归档、摘要校验；工作树不暴露下载 URL；需宿主 bootstrap | `fuwu_service/system_update.py`、`fuwu_service/api.py`、`frontend/apps/web-antd/src/views/system-update/index.vue`、`tests/test_system_update.py` |
 | 远端发行发现与自动同步 | `GET /api/release-storage/latest`、`POST /api/release-storage/sync-latest`、`POST /api/release-storage/stage-remote` | latest 查询用 `release.storage.read`；同步和 staging 用 `release.storage.publish`；均受项目范围限制 | 发行页自动读取 GitHub 正式版；发布权限用户自动下载到受保护 staging、校验并发布，跳过已导入版本和降级；`stage-remote` 仍可单独使用 | 同版本不同内容拒绝覆盖；只允许 GitHub HTTPS 域名；不返回下载 URL 或凭据 | `fuwu_service/release_service.py`、`fuwu_service/api.py`、`frontend/apps/web-antd/src/views/release-management/index.vue`、相关测试 |
 | 更新器读取 | 对象存储 HTTPS `GET .../latest.json`；服务代理 `GET /api/downloads/{project}/{channel}/latest.json` | 匿名只读 | stable latest 指向不可变 v1 manifest；服务代理校验数据库、manifest 和指针摘要 | 客户端验证 SHA256 后暂存；latest 不缓存 | `fuwu_service/release_service.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py` |
 | Fuwu 对外下载 | `GET /api/downloads/{project}/{version}/{filename}` | 公开；仅已发布 stable 制品 | 由数据库发行记录解析 manifest、`SHA256SUMS` 和资产，再用服务端凭据流式读取；兼容 `vX.Y.Z` 版本段并归一化为数字版本 | 未发布版本、未知资产和路径遍历固定返回 404；不暴露对象存储凭据 | `fuwu_service/release_service.py`、`fuwu_service/server.py`、`release_api/views.py`、`tests/test_public_latest.py`、`tests/test_public_download.py` |
