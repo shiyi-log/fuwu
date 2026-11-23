@@ -16,6 +16,13 @@
 | `0.0.9` | GitHub Release 与生产部署已完成；生产 revision `6271b07` | 2026-11-10 | 保持 SQLite；无数据迁移 | 托管项目发行版本接受完整三段 SemVer；latest GitHub Release 改为 `release.storage.read` 只读权限；新增受 `release.storage.publish` 保护的 `/api/release-storage/sync-latest`，自动发现、暂存、校验并发布新正式版，避免降级和同版本覆盖 | 后端 `139 passed`、96 subtests，Django check、迁移漂移检查、前端 focused Vitest `28 passed`、typecheck 和生产构建通过；本地内存存储真实自动发布与制品 SHA256 校验通过；生产健康检查通过，但生产自动同步写入验收待完成 |
 | `0.1.0` | GitHub Latest Release 已发布；标签/生产提交 `3172ed1` | 2026-11-16 | SQLite 幂等增加三张恢复表，原有业务记录保持；旧代码对加表库回退兼容已演练 | 核心拆分兼容旧导入；增加邮箱恢复，代理 HTTPS 判定收紧；发行及匿名下载契约兼容 | 后端167、前端73、CI/CD、真实S3隔离发布回退、生产升级与公网资产摘要通过；SMTP未配置，真实邮件投递待验收 |
 | `0.1.1` | 本地候选；精确提交、标签、GitHub Release 与生产部署待完成 | 2026-11-23 | 无 schema 迁移；更新前使用 SQLite backup API 创建一致性快照 | 新增受权限保护的自更新检查、安装任务、状态查询、systemd 重启、版本健康检查与失败回滚；既有发行管理 API 保持兼容 | 后端、前端、CI/CD 与生产验收结果待本轮逐项记录；在线安装要求先完成宿主 bootstrap |
+| `0.1.2` | 本地候选；精确提交、标签、GitHub Release 与生产在线更新待验证 | 2026-11-23 | 无 schema 迁移 | 配置 `FUWU_INSTALL_ROOT` 时，默认配置及相对 GitHub 凭据路径以稳定安装根解析；显式覆盖优先级、现有 API 和更新包格式保持兼容 | 本地后端 `193 passed`、158 subtests，路径/授权定向测试 29 项、10 subtests，Vben typecheck、Django/迁移/版本/锁文件/编译检查通过；精确提交 CI/CD 和真实在线更新仍待完成 |
+
+## 0.1.2 配置路径兼容修正候选（2026-11-23）
+
+- 配置 `FUWU_INSTALL_ROOT` 的直接运行部署将默认 `fuwu.config.json` 和相对 GitHub 凭据路径解析到稳定安装根，避免 `current` 切换后误读新版本目录。
+- 显式 `FUWU_CONFIG_FILE`、`FUWU_GITHUB_CREDENTIALS_FILE` 继续优先；未配置安装根时保持本地源码根路径行为。
+- 无数据库 schema 迁移；API 与 0.1.1 更新包格式保持兼容。正式标签、Release、CI/CD 与线上安装须以精确提交的后续验证记录为准。
 
 ## 0.1.0 正式发行（2026-11-16）
 

@@ -1,6 +1,6 @@
 services:
   api:
-    image: fuwu-api:${FUWU_IMAGE_TAG:-0.1.1}
+    image: fuwu-api:${FUWU_IMAGE_TAG:-0.1.2}
     build:
       context: .
       dockerfile: Dockerfile
@@ -49,7 +49,7 @@ services:
       retries: 10
 
   frontend:
-    image: fuwu-frontend:${FUWU_IMAGE_TAG:-0.1.1}
+    image: fuwu-frontend:${FUWU_IMAGE_TAG:-0.1.2}
     build:
       context: ./frontend
       dockerfile: Dockerfile

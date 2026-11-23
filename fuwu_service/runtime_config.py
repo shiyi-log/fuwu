@@ -20,17 +20,30 @@ DEFAULT_CONFIG_PATH = ROOT_DIR / "fuwu.config.json"
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]{0,127}$")
 
 
-def config_path(value: str | Path | None = None) -> Path:
-    if value is None:
-        value = os.environ.get("FUWU_CONFIG_FILE") or DEFAULT_CONFIG_PATH
-    path = Path(value).expanduser()
+def runtime_root(env: Mapping[str, str] | None = None) -> Path:
+    """Keep mutable deployment files outside a replaceable release tree."""
+    env = os.environ if env is None else env
+    configured = env.get("FUWU_INSTALL_ROOT")
+    if not configured:
+        return ROOT_DIR
+    path = Path(configured).expanduser()
     if not path.is_absolute():
-        path = ROOT_DIR / path
+        raise ReleaseError("invalid_config", "installation root must be absolute", 503)
     return path.resolve()
 
 
-def load_config(value: str | Path | None = None) -> dict[str, Any]:
-    path = config_path(value)
+def config_path(value: str | Path | None = None, *, env: Mapping[str, str] | None = None) -> Path:
+    env = os.environ if env is None else env
+    if value is None:
+        value = env.get("FUWU_CONFIG_FILE") or runtime_root(env) / DEFAULT_CONFIG_PATH.name
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = runtime_root(env) / path
+    return path.resolve()
+
+
+def load_config(value: str | Path | None = None, *, env: Mapping[str, str] | None = None) -> dict[str, Any]:
+    path = config_path(value, env=env)
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
@@ -60,18 +73,19 @@ def superadmin_bootstrap_config(value: str | Path | None = None) -> dict[str, st
     return {"username": username, "displayName": display_name, "passwordEnv": password_env}
 
 
-def github_credentials_file(value: str | Path | None = None) -> Path:
+def github_credentials_file(value: str | Path | None = None, *, env: Mapping[str, str] | None = None) -> Path:
     """Resolve the private GitHub credential file from the root config.
 
     An explicit ``FUWU_GITHUB_CREDENTIALS_FILE`` environment value wins so a
     container can mount secrets outside the source tree.  The checked-in
     config only contains a relative, non-secret default path.
     """
-    env_value = os.environ.get("FUWU_GITHUB_CREDENTIALS_FILE")
+    env = os.environ if env is None else env
+    env_value = env.get("FUWU_GITHUB_CREDENTIALS_FILE")
     if env_value:
         path = Path(env_value).expanduser()
-        return path if path.is_absolute() else ROOT_DIR / path
-    data = load_config(value)
+        return path if path.is_absolute() else runtime_root(env) / path
+    data = load_config(value, env=env)
     raw = data.get("github", {})
     if not isinstance(raw, dict):
         raise ReleaseError("invalid_config", "GitHub configuration is invalid", 503)
@@ -79,7 +93,7 @@ def github_credentials_file(value: str | Path | None = None) -> Path:
     if not isinstance(configured, str) or not configured.strip():
         raise ReleaseError("invalid_config", "GitHub credential file configuration is invalid", 503)
     path = Path(configured).expanduser()
-    return path if path.is_absolute() else ROOT_DIR / path
+    return path if path.is_absolute() else runtime_root(env) / path
 
 
 def bootstrap_from_config(database: str | Path | None = None, *, config: str | Path | None = None,

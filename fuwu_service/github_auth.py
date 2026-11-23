@@ -26,7 +26,6 @@ from typing import Any, Mapping, Protocol
 
 from .errors import ReleaseError
 UTC = dt.timezone.utc
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_REQUIRED_REPOSITORY = "shiyi-log/heyue"
 _TOKEN_MAX_LENGTH = 512
 _GITHUB_README_RESPONSE_MAX_BYTES = 2_000_000
@@ -52,11 +51,12 @@ def github_credentials_path(env: Mapping[str, str] | None = None) -> Path:
     env = os.environ if env is None else env
     value = env.get("FUWU_GITHUB_CREDENTIALS_FILE")
     if value:
+        from .runtime_config import runtime_root
         path = Path(value).expanduser()
-        return path if path.is_absolute() else PROJECT_ROOT / path
+        return path if path.is_absolute() else runtime_root(env) / path
     try:
         from .runtime_config import github_credentials_file
-        return github_credentials_file()
+        return github_credentials_file(env=env)
     except ReleaseError:
         raise
     except Exception:
