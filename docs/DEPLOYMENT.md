@@ -55,7 +55,7 @@ uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FU
   frontend/apps/web-antd/dist -> /www/wwwroot/fuwu/current/frontend/apps/web-antd/dist
 ```
 
-`fuwu-server.service` 应由 root 管理，工作目录使用稳定路径 `/www/wwwroot/fuwu`，并启动 `/www/wwwroot/fuwu/current/.venv/bin/fuwu-server`。服务环境必须明确设置 `FUWU_INSTALL_ROOT=/www/wwwroot/fuwu`、`FUWU_DATABASE=/www/wwwroot/fuwu/fuwu.sqlite3`、`FUWU_STAGING_DIR=/www/wwwroot/fuwu/staging` 和 `FUWU_CONFIG_FILE=/www/wwwroot/fuwu/fuwu.config.json`；保留现有 `.env` 供应用密钥配置使用，并读回 `systemctl show` 确认这些路径与服务配置一致。配置中的相对 GitHub 凭据路径默认相对源码根解析，因此还应将 `FUWU_GITHUB_CREDENTIALS_FILE` 固定为现有受保护凭据文件的绝对路径，避免切换版本后丢失全局授权。Nginx 静态目录必须跟随 `current` 链接，否则 Python 服务切换后前端仍可能留在旧版本。bootstrap 需短暂停服完成接管；启用前读回服务版本、登录/API、静态资源、SQLite `PRAGMA integrity_check` 和 systemd 开机启动状态。之后每次在线更新会在 `data/backups/` 创建权限为 `0700` 的备份目录和权限为 `0600` 的 SQLite 一致性备份；更新器不替换 `.env`、根配置、凭据、数据库、staging 或日志。
+`fuwu-server.service` 应由 root 管理，工作目录使用稳定路径 `/www/wwwroot/fuwu`，并启动 `/www/wwwroot/fuwu/current/.venv/bin/fuwu-server`。服务环境必须明确设置 `FUWU_INSTALL_ROOT=/www/wwwroot/fuwu`、`FUWU_DATABASE=/www/wwwroot/fuwu/fuwu.sqlite3`、`FUWU_STAGING_DIR=/www/wwwroot/fuwu/staging` 和 `FUWU_CONFIG_FILE=/www/wwwroot/fuwu/fuwu.config.json`；保留现有 `.env` 供应用密钥配置使用，并读回 `systemctl show` 确认这些路径与服务配置一致。从 0.1.2 起，配置 `FUWU_INSTALL_ROOT` 后默认根配置及相对 GitHub 凭据路径均以稳定安装根解析；显式 `FUWU_CONFIG_FILE` 和 `FUWU_GITHUB_CREDENTIALS_FILE` 仍优先。首次从 0.1.1 引导时，应将现有配置与受保护凭据文件固定为绝对路径，避免切换版本后丢失全局授权。Nginx 静态目录必须跟随 `current` 链接，否则 Python 服务切换后前端仍可能留在旧版本。bootstrap 需短暂停服完成接管；启用前读回服务版本、登录/API、静态资源、SQLite `PRAGMA integrity_check` 和 systemd 开机启动状态。之后每次在线更新会在 `data/backups/` 创建权限为 `0700` 的备份目录和权限为 `0600` 的 SQLite 一致性备份；更新器不替换 `.env`、根配置、凭据、数据库、staging 或日志。
 
 bootstrap 按以下顺序执行，每一步都保留读回结果：
 
@@ -108,6 +108,8 @@ python3 scripts/build_update_bundle.py \
 ```
 
 服务通过独立 transient worker 下载并校验 GitHub `SHA256SUMS`、更新包摘要及 `fuwu-update.json`，SQLite backup API 先创建一致性备份；依赖安装在新版本目录完成后，worker 原子切换 `current`，通过 `systemctl restart fuwu-server.service` 重启并检查 `/healthz` 中的版本。切换后的重启或健康检查失败会恢复旧 `current` 并再次验证；切换前失败保留旧版本。HTTP 进程不覆盖自身正在运行的源码。数据库结构迁移不由更新器自动猜测或回滚，版本若引入非兼容 schema 变化须另行制定迁移策略。
+
+更新期间服务重启可能使一次任务轮询失败，可点击“重新查询任务”继续读取持久状态。浏览器提示“新版本可用”时点击刷新以加载当前静态资源；旧页面继续加载已被替换的动态脚本可能导致登录后跳转失败。刷新后如回到登录页，使用原账号重新登录即可；更新页会恢复当前标签页保存的任务 ID，并显示最终任务结果。
 
 ### 服务器本机修改或恢复密码
 

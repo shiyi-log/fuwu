@@ -2,33 +2,49 @@
 
 更新时间：2026-11-23
 
-## 2026-11-23 配置路径兼容修正候选 0.1.2
+## 2026-11-23 配置路径兼容修正与正式发布 0.1.2
 
-- 版本字段同步为 `0.1.2`，标签为 `v0.1.2`；当前是本地候选，精确提交、CI/CD、正式 Release 和生产在线更新尚待验证。
+- `v0.1.2` 固定提交 `bcec84936ba147d0ac4ded6ccc1f5d0e98d561b6`；[CI 45173550490](https://github.com/shiyi-log/fuwu/actions/runs/45173550490) 与 [CD 45174683717](https://github.com/shiyi-log/fuwu/actions/runs/45174683717) 均成功，[v0.1.2 正式 Release](https://github.com/shiyi-log/fuwu/releases/tag/v0.1.2) 已发布并为最新正式版。源码包与完整更新包按正式 `SHA256SUMS` 在本地独立核验通过。
 - 配置 `FUWU_INSTALL_ROOT` 时，默认根配置文件和相对 GitHub 凭据路径以稳定安装根解析，确保切换活动版本后保留主机既有配置与全局 GitHub 授权。
 - 显式配置文件和凭据环境覆盖继续优先；不设置安装根的本地运行行为不变。无 schema 迁移，现有更新 API 与包格式保持兼容。
-- 本地验证：路径和 GitHub 授权定向测试 `29 passed`、`10 subtests passed`；完整后端 `193 passed`、`158 subtests passed`；Vben typecheck、Django check、迁移漂移检查、版本一致性、`uv lock --check`、Python 编译和 `git diff --check` 通过。精确提交 CI/CD 和生产 UI 更新证据仍待后续逐项记录，不以前一版本的候选测试推断本版本已上线。
+- 本地验证：路径和 GitHub 授权定向测试 `29 passed`、`10 subtests passed`；完整后端 `193 passed`、`158 subtests passed`；前端 `82 passed`、Vben typecheck 与生产 build、Django check、迁移漂移检查、版本一致性、`uv lock --check`、Python 编译和 `git diff --check` 通过。生产已完成下述首次 bootstrap 与浏览器实际 `0.1.1 → 0.1.2` 在线更新，分别保留证据。
+
+## 2026-11-23 管理台实际在线更新 0.1.1 → 0.1.2
+
+- Chrome 既有 Fuwu 标签页使用原账号登录后，在“系统更新”页面点击“在线更新”并确认“开始更新”，创建任务 `9861f46ceac387b5a811072562937c51`。任务从 `0.1.1` 更新到 `0.1.2`，`startedAt=2026-11-23T12:51:53.283664Z`、`updatedAt=2026-11-23T12:52:23.036450Z`；页面与独立 HTTPS API 均读回 `status=succeeded`、`progress=100`、`errorCode=null`。
+- SSH 独立读回 `current=/www/wwwroot/fuwu/releases/v0.1.2`，包清单 revision 为 `bcec84936ba147d0ac4ded6ccc1f5d0e98d561b6`，systemd active/enabled，本机与公网 `/healthz` 均返回 `0.1.2`。公网 HTML 及主脚本 `/jse/index-index-DV69LwBc.js` 与活动版本文件逐字节一致，脚本 MIME 为 `application/javascript`；根 `.cloud-revision` 运维标记同步为该精确提交。
+- 更新后 SQLite `integrity_check=ok`，4 个项目、24 条发行、5 条 latest、1 个账号的业务计数保持不变。自动一致性备份 `/www/wwwroot/fuwu/data/backups/fuwu-9861f46ceac387b5a811072562937c51.sqlite3` 的父目录权限为 `0700`、文件为 `0600`，备份完整性为 `ok` 且业务计数相同。进一步对比自动备份与当前数据库的 `projects`、`releases`、`latest`、`account_users` 四表，业务记录逐行完全一致；检查只输出比较结果，不输出记录内容。
+- `.env`、根配置及 GitHub 凭据内容与 bootstrap 备份一致，staging、logs 和 secrets 均在位，Nginx 配置一致。页面旧资源曾导致登录跳转失败，刷新当前资源后恢复；使用原凭据再次登录成功，没有执行密码变更或重置。
+- 更新后刷新页面并重新登录，任务恢复显示“更新成功”、`0.1.1 → 0.1.2`，当前版本与最新版本均为 `0.1.2`，页面显示“已是最新版本”。视觉核验截图保存在 Git 忽略的本地证据 `data/run/online-acceptance-20261123/system-update-0.1.2.jpg`；未将账号或凭据写入文档。
+- 本轮完成真实生产在线升级与成功状态恢复；未在生产注入故障验证 updater 自动回滚。SMTP 投递、独立 Heyue 全新安装及历史清理仍保留各自验收边界。
+
+## 2026-11-23 首次生产 bootstrap 0.1.0 → 0.1.1
+
+- 生产从旧 root 直接运行进程迁移为 `releases/current` 与 `fuwu-server.service`；已读回 systemd active/enabled、`current` 指向 `v0.1.1`、包清单 revision 为 `ab52d74fe79234944136b7d4ef7bdd7f12485c96`。这是首次 SSH 引导安装，不等同从管理台触发在线升级。
+- 迁移前备份保存在 `/www/wwwroot/fuwu/.codex-deploy-bootstrap-20261123T122732Z`；SQLite `integrity_check=ok`，业务计数为 4 个项目、24 条发行、5 条 latest、1 个账号。`.env`、根配置与 GitHub 凭据文件内容核对一致；文档不记录秘密值。Nginx 配置未修改。
+- 首次切换的公网验收因 Cloudflare 拒绝 Python 默认 User-Agent 进入引导脚本的自动回退分支；改用明确验收 User-Agent 后重试成功。该记录是 bootstrap 恢复证据，不作为在线更新器的生产失败回滚验收。
+- 公网 API 的登录、用户信息、权限与项目读取均 HTTP 200。浏览器旧脚本动态 import 失败经重新加载当前静态资源恢复，随后使用原账号完成上文记录的真实在线更新；没有执行密码重置。
 
 ## 2026-11-23 发行页加载故障诊断
 
 - 生产 `Heyue / stable` 管理读取使用既有管理员会话验证：状态与审计接口均 HTTP 200，约 1.0/1.2 秒；16 条发行的清单接口 HTTP 200，约 7.3 秒，48 个对象 HEAD 串行检查；匿名 stable `latest.json` HTTP 200。生产页面截图中的通用失败提示不能单独证明项目数据为空或权限错误。
 - 本地修复候选将版本、状态、审计加载改为独立落地，失败提示指出对应模块、超时、401/403 或 HTTP 状态；保留请求代次保护以丢弃旧项目/频道响应。
 - 发行列表的 S3 HEAD 改为并发检查（每次最多 16 条发行任务），单个 HEAD 超时上限为 2 秒；外部可替换对象存储接口仍沿用原调用签名。
-- 新增前端部分请求失败回归测试、后端并发 HEAD 与 S3 超时传递测试。此为本地未部署候选，生产改动未经授权或执行；生产真实响应仅作只读诊断，不含认证材料。
+- 新增前端部分请求失败回归测试、后端并发 HEAD 与 S3 超时传递测试。诊断时仅验证本地候选、未改生产；相关修复随后纳入本轮正式版本。生产真实响应仅作只读诊断，不含认证材料。
 
 ## 2026-11-23 Fuwu 自身版本检查入口（历史候选）
 
 - 管理台新增按 `fuwu.update.manage` 权限控制的“系统更新”页面；`GET /api/system-update` 固定读取 `shiyi-log/fuwu` 最新正式 Release，并筛选版本、清理说明文本、限制响应和资产字段，不接受调用方 URL 或命令。
 - 入口只检查并展示当前/最新版本、Release 说明及资产元数据；线上采用直接运行 `fuwu-server`，本次没有宿主更新器、可靠重启和回滚契约，因此不在 Web 进程内覆盖代码，也不执行生产安装或重启。
-- 初始入口只检查版本；随后已扩展为下方 0.1.1 在线安装候选。初始版本检查实现及生产未部署的结论保留作历史，不代表当前工作树能力。
+- 初始入口只检查版本；随后扩展为下方 0.1.1 正式在线更新器。初始版本检查实现及生产未部署的结论保留作历史，不代表当前线上能力。
 
-## 2026-11-23 Fuwu 在线更新候选 0.1.1
+## 2026-11-23 Fuwu 在线更新正式发布 0.1.1
 
-- 版本字段推进为 `0.1.1`，精确源码提交、`v0.1.1` 标签、GitHub Release、CI/CD 和生产部署仍待本轮验证，不能把候选记作已发布或已上线。
+- `v0.1.1` 固定提交 `ab52d74fe79234944136b7d4ef7bdd7f12485c96`；[CI 45172745086](https://github.com/shiyi-log/fuwu/actions/runs/45172745086) 与 [CD 45173416540](https://github.com/shiyi-log/fuwu/actions/runs/45173416540) 均成功，[v0.1.1 正式 Release](https://github.com/shiyi-log/fuwu/releases/tag/v0.1.1) 已发布；源码包与完整更新包按正式 `SHA256SUMS` 在本地独立核验通过。
 - 管理台按 `fuwu.update.manage` 提供版本检查、确认后提交安装、任务进度与刷新恢复；后端通过 HTTPS POST 校验最新稳定 tag，并将安装交给独立 systemd transient worker。
 - Release 包由精确 tag 对应提交构建，携带后端、前端 dist、更新清单及 `SHA256SUMS`；worker 校验元数据、下载大小、摘要、归档路径和包内版本后才安装。
 - worker 依次准备新版本目录、创建 SQLite backup API 一致性快照、原子切换 `current`、重启 `fuwu-server.service`，并要求 `/healthz` 返回目标版本；切换后的启动/健康失败时回滚旧链接并验证旧版健康。更新器不替换 `.env`、数据库、staging、logs 或 secrets；无非兼容 schema 迁移。
-- 生产现有 root 直接运行部署尚未具备自动安装目录结构。实际部署前须完成一次受保护宿主 bootstrap，建立版本目录和经 `current` 转发的 Nginx dist 链接，安装启用 systemd 单元，备份 SQLite 并验收登录、关键 API、静态资源与完整性。不得把工作树测试、Release 创建或 SSH 连通性写成生产更新已完成。
+- 旧 root 直接运行部署已完成上文记录的受保护宿主 bootstrap，建立版本目录和经 `current` 转发的 Nginx dist 链接、安装启用 systemd 单元并备份 SQLite。管理台实际触发更高正式版本 `0.1.2` 的在线更新已按上文任务记录独立验收，不由 bootstrap 或 Release 创建推断。
 - 2026-11-23 本地候选验证：后端 `188 passed`、`158 subtests passed`；前端 `82 passed`，Vben typecheck 与生产 build 通过；Django check、迁移漂移检查、版本一致性、`uv lock --check`、Python 编译和 `git diff --check` 通过。活动版本权限检查允许受保护的 Python runtime 符号链接，仍拒绝 group/world writable 目标；SQLite 备份目录和文件分别强制 `0700`、`0600`。这些结果不替代精确提交 CI/CD 与生产验收。
 
 ## 项目目标
@@ -116,17 +132,17 @@
 
 | 项目 | 当前记录 |
 | --- | --- |
-| 源码版本 | `0.1.0` 已发布并上线，运行/标签提交 `3172ed1`；后续台账提交不改变运行代码 |
+| 源码版本 | 最新正式版与生产均为 `0.1.2 / bcec849`；已通过管理台从 `0.1.1` 实际在线更新并读回成功；台账提交不改写正式标签 |
 | 版本格式 | 三段数字，每段一位；`0.0.9` 后进位为 `0.1.0` |
 | 后端 | Python 3.14、uv、轻量 HTTP 服务、Django 适配器 |
 | 前端 | Vben Admin 5.7.0、Vue 3、Ant Design Vue |
 | 前端工具 | Node.js 22.18.0、pnpm 10.33.0 |
 | 业务数据 | 当前使用 SQLite；MySQL/Redis repository adapter 尚未实现 |
 | 对象存储 | 可替换接口；S3 兼容 provider 使用 AWS SigV4 |
-| 发布基线 | `v0.1.0` / `3172ed1`；CI、CD、源码与前端包摘要、真实 S3 隔离验收、生产部署及公网下载通过；真实 SMTP 尚未验收 |
+| 发布基线 | `v0.1.1 / ab52d74`、`v0.1.2 / bcec849` 均已完成精确提交 CI/CD、正式 Release 和源码/更新包 SHA256 独立核验；生产首次 bootstrap 到 `0.1.1`、管理台在线升级到 `0.1.2` 已分别验收；真实 SMTP 仍未验收 |
 | 本机部署证据 | `0.0.4` 的 API、前端镜像已无缓存重建；Docker 配置校验通过；完整运行态仍需单独记录 |
-| 云端部署证据 | `/www/wwwroot/fuwu` 已运行 `3172ed1 / 0.1.0`；回环与公网健康、登录/只读管理 API、可信代理拒绝检查和公开下载均通过 |
-| 远端引用 | `v0.1.0` 正式标签与 GitHub Latest Release 已建立，精确源码提交 `3172ed1` |
+| 云端部署证据 | `/www/wwwroot/fuwu/current` 为 `v0.1.2 / bcec849`，任务 `9861f46ceac387b5a811072562937c51` succeeded/100%；systemd active/enabled，健康版本、前端文件、数据库/自动备份完整性、配置保持与刷新恢复均读回通过；生产故障回滚未注入验收 |
+| 远端引用 | `v0.1.1` 固定 `ab52d74fe79234944136b7d4ef7bdd7f12485c96`；GitHub Latest Release `v0.1.2` 固定 `bcec84936ba147d0ac4ded6ccc1f5d0e98d561b6` |
 
 ## 里程碑
 
@@ -168,6 +184,7 @@
 
 | 日期 | 变更 | 验证状态 |
 | --- | --- | --- |
+| 2026-11-23 | 正式发布 `v0.1.1` 在线更新器与 `v0.1.2` 稳定配置路径修正；生产首次 bootstrap 后从管理台实际在线更新至 `0.1.2` | 两版精确提交 CI/CD、Release 和源码/完整更新包 SHA256 独立核验通过；`0.1.2` 后端193/158 subtests、前端82/typecheck/build通过；浏览器任务 succeeded/100%，HTTPS API、systemd、当前清单、健康版本、静态文件、数据库与自动备份、配置保持及刷新恢复读回通过；生产未故障注入验收回滚 |
 | 2026-10-23 | 增加匿名 stable `latest.json` 服务代理，严格绑定已发布数据库记录与不可变 manifest；补充 Django 与轻量 HTTP 路由 | 本地 `tests/test_public_latest.py`、`tests/test_public_download.py`、`tests/test_api.py` 共 8 passed；线上部署待从 GitHub 拉取新 revision 后复核 |
 | 2026-10-23 | 修复 GitHub Release 远端 staging 的长耗时请求：前端单独配置 15 分钟超时、代理模板 20 分钟超时；仅 408/504 或无 HTTP 状态的网络中断保留 staging 引用继续发布；项目或频道切换会丢弃旧上下文；轻量服务吞掉已断开的响应管道错误；待确认的 staging 禁止重复下载 | 后端 `115 passed, 88 subtests passed`；前端 Vitest `32 passed`、typecheck、生产构建、Django check、migration check、compileall、`git diff --check` 均通过；未将此本地候选直接当作线上部署证据 |
 | 2026-10-24 | 增加按项目登记仓库自动发现最新正式 GitHub Release，并支持 `latest:true` 服务端下载到受保护 staging；前端提供一键发现、下载和预填发布表单，仍需显式 publish | 后端全量 `120 passed`、88 项子测试；前端 latest focused Vitest、typecheck、生产构建和 `git diff --check` 通过；远端部署与 Bark 线上 staging 待本轮单独验收 |
@@ -202,6 +219,7 @@
 
 | 日期 | 范围 | 结果 | 限制 |
 | --- | --- | --- | --- |
+| 2026-11-23 | Fuwu `0.1.1`、`0.1.2` 正式发布、首次宿主迁移与管理台在线更新 | 两版精确提交 CI/CD 与正式资产摘要独立核验通过；Chrome 实际创建更新任务 `9861f46ceac387b5a811072562937c51`，`0.1.1 → 0.1.2` succeeded/100%，独立 HTTPS API 同结果；current/manifest、systemd、健康版本、HTML/JS、数据库与自动备份完整性、配置保持及刷新后任务恢复均通过 | 首次 bootstrap 经 SSH 完成，后续升级由管理台真实触发；未生产故障注入验收 updater 自动回滚；SMTP 与独立 Heyue 客户端验收范围不变 |
 | 2026-10-23 | Heyue v1.0.2 远端 Fuwu 发布与公开下载 | 远端 Fuwu 从绑定 Release 下载并校验 5 个资产，发布 HTTP 201；稳定发行记录、manifest、`SHA256SUMS` 和不可变对象已写入 S3；线上服务 revision `d64a89b` 在 `127.0.0.1:8088` 提供匿名 `/api/downloads/heyue/1.0.2/...`；外部 HTTPS 对 Docker、前端、安装器、Python 和源码归档均返回 HTTP 200，大小与 SHA256 全部匹配；项目构建说明已改为 Fuwu 地址且不含 GitHub 下载 URL | S3 bucket 原生匿名 GET 仍返回 403，因此公开下载由 Fuwu 代理流式提供；未将管理员账号、PAT、AWS 密钥或其他凭据写入记录；Heyue 客户端实际安装/升级仍需独立验收 |
 | 2026-10-24 | Fuwu `v0.0.7` 远端部署与 Bootstrap 验收 | 远端运行文件 SHA256 与提交 `4844ae4` 一致；进程恢复在 `127.0.0.1:8088`，`/healthz` HTTP 200，`8000` 无监听；匿名 Bootstrap `--help` 真实执行返回 0；近期日志错误模式 0，敏感凭据模式 0 | Heyue `v1.0.5` 尚未冻结；stable/latest 保持 Heyue `v1.0.4` |
 | 2026-10-21 | 0.0.3 正式发布本机验证 | 发布提交 `566603e` 的功能代码沿用已验证基线；82 项 pytest、Django check、迁移漂移检查、Python 编译和 `git diff --check` 通过；无缓存重建 `fuwu-api:0.0.3` 与 `fuwu-frontend:0.0.3`，前端使用 Node.js 22.18.0 / pnpm 10.33.0 构建；API、前端、MySQL 健康检查为 healthy，Redis 运行中但未配置健康检查；API `/healthz`、登录、用户信息、登出和前端首页访问通过，未认证 `/api/` 代理按预期返回 401 | 本机 SQLite 初始化账号仅用于验收并在结束时清除；MySQL/Redis 未接入业务仓库；云端主机状态未检查；真实对象存储和外网 HTTPS 未验证 |
@@ -215,7 +233,7 @@
 ## 下一步
 
 1. 运维提供受保护 SMTP 配置与测试邮箱后，补真实投递、验证码找回与旧会话失效验收。
-2. 按部署环境维护 Cloudflare/可信代理来源列表；单进程重启步骤已记录，开机保活仍沿用既有运维安排。
+2. 按部署环境维护 Cloudflare/可信代理来源列表；当前宿主已由 `fuwu-server.service` 管理并启用开机启动，今后升级继续保留任务、版本、备份及健康证据。
 3. 后续若需要关页仍自动同步或多实例部署，单独设计持久化任务、共享事务仓库与分布式锁；不把当前页面五分钟检查描述为常驻调度。
 4. 独立 Heyue 全新安装验收与此前公开历史清理范围保留各自证据边界，不由本次服务升级自动宣告完成。
 
@@ -223,6 +241,7 @@
 
 | 日期 | 变更 |
 | --- | --- |
+| 2026-11-23 | 发布 `0.1.1` 在线更新器及 `0.1.2` 配置路径修正；精确提交 CI/CD、正式资产摘要、首次生产 bootstrap 与管理台实际在线更新分别记录，生产已到 `0.1.2`；任务与刷新恢复成功，未生产故障注入验收回滚 |
 | 2026-11-16 | 完成 `0.1.0` 整合、代理修复、业务回归、CI/CD、真实 S3 隔离验证和生产升级；SMTP 未配置保留待验收，正式标签不随台账更新改写 |
 | 2026-10-23 | `0.0.6` 候选：GitHub PAT 授权统一到系统设置全局接口；畸形或旧项目级凭据文件 fail closed；公开 API/部署文档同步更新；本地测试与 Django 检查结果单独记录 |
 | 2026-10-22 | 开发 `0.0.5`：前端安全性增强，统一会话过期处理，引入重定向路径验证防止开放重定向攻击 |

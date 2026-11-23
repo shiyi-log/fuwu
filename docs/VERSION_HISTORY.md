@@ -14,15 +14,20 @@
 | `0.0.7` | GitHub Release 已发布；标签固定 `4844ae4` | 2026-10-24 | 保持 SQLite；无数据迁移 | Heyue Bootstrap 强绑定 stable 指针与不可变 manifest，并固定传入已核验版本和交互模式；stable/latest 指针保持兼容 | 本地 `127 passed`、92 subtests、Django check、`uv lock --check`、`uv build`、嵌入 Python/Shell 语法和 argv 回归通过；远端 8088 健康、8000 未监听、真实 Bootstrap `--help` 通过；Heyue stable 保持 `v1.0.4` |
 | `0.0.8` | GitHub Release 已发布；标签固定 `468972d` | 2026-10-25 | 保持 SQLite；无数据迁移 | Heyue Shell Bootstrap 将 Python 主体写入受保护临时文件后启动，交互安装器继承调用端 TTY；stable/latest、匿名下载和固定安装 argv 契约保持兼容 | 本地 `133 passed`、94 subtests、Django check、`uv lock --check`、`uv build`、Shell/Python 编译和 PTY 回归通过；生产 revision `468972d`、8088 健康 200、线上 Bootstrap 摘要读回通过；Heyue 测试服务器修复后完整安装待复验 |
 | `0.0.9` | GitHub Release 与生产部署已完成；生产 revision `6271b07` | 2026-11-10 | 保持 SQLite；无数据迁移 | 托管项目发行版本接受完整三段 SemVer；latest GitHub Release 改为 `release.storage.read` 只读权限；新增受 `release.storage.publish` 保护的 `/api/release-storage/sync-latest`，自动发现、暂存、校验并发布新正式版，避免降级和同版本覆盖 | 后端 `139 passed`、96 subtests，Django check、迁移漂移检查、前端 focused Vitest `28 passed`、typecheck 和生产构建通过；本地内存存储真实自动发布与制品 SHA256 校验通过；生产健康检查通过，但生产自动同步写入验收待完成 |
-| `0.1.0` | GitHub Latest Release 已发布；标签/生产提交 `3172ed1` | 2026-11-16 | SQLite 幂等增加三张恢复表，原有业务记录保持；旧代码对加表库回退兼容已演练 | 核心拆分兼容旧导入；增加邮箱恢复，代理 HTTPS 判定收紧；发行及匿名下载契约兼容 | 后端167、前端73、CI/CD、真实S3隔离发布回退、生产升级与公网资产摘要通过；SMTP未配置，真实邮件投递待验收 |
-| `0.1.1` | 本地候选；精确提交、标签、GitHub Release 与生产部署待完成 | 2026-11-23 | 无 schema 迁移；更新前使用 SQLite backup API 创建一致性快照 | 新增受权限保护的自更新检查、安装任务、状态查询、systemd 重启、版本健康检查与失败回滚；既有发行管理 API 保持兼容 | 后端、前端、CI/CD 与生产验收结果待本轮逐项记录；在线安装要求先完成宿主 bootstrap |
-| `0.1.2` | 本地候选；精确提交、标签、GitHub Release 与生产在线更新待验证 | 2026-11-23 | 无 schema 迁移 | 配置 `FUWU_INSTALL_ROOT` 时，默认配置及相对 GitHub 凭据路径以稳定安装根解析；显式覆盖优先级、现有 API 和更新包格式保持兼容 | 本地后端 `193 passed`、158 subtests，路径/授权定向测试 29 项、10 subtests，Vben typecheck、Django/迁移/版本/锁文件/编译检查通过；精确提交 CI/CD 和真实在线更新仍待完成 |
+| `0.1.0` | GitHub Release 已发布；标签/原生产提交 `3172ed1` | 2026-11-16 | SQLite 幂等增加三张恢复表，原有业务记录保持；旧代码对加表库回退兼容已演练 | 核心拆分兼容旧导入；增加邮箱恢复，代理 HTTPS 判定收紧；发行及匿名下载契约兼容 | 后端167、前端73、CI/CD、真实S3隔离发布回退、生产升级与公网资产摘要通过；SMTP未配置，真实邮件投递待验收 |
+| `0.1.1` | 正式 Release 已发布；标签固定 `ab52d74fe79234944136b7d4ef7bdd7f12485c96`；首次生产 bootstrap 完成后已在线升级至 `0.1.2` | 2026-11-23 | 无 schema 迁移；更新前使用 SQLite backup API 创建一致性快照 | 新增受权限保护的自更新检查、安装任务、状态查询、systemd 重启、版本健康检查与失败回滚；既有发行管理 API 保持兼容 | 后端188/158 subtests、前端82/typecheck/build、精确提交 CI/CD 及正式源码/更新包摘要通过；首次 bootstrap 与后续管理台 `0.1.1 → 0.1.2` 成功任务分别验收；生产未故障注入验证自动回滚 |
+| `0.1.2` | GitHub Latest Release 已发布；标签与生产 revision 为 `bcec84936ba147d0ac4ded6ccc1f5d0e98d561b6`；管理台实际在线更新成功 | 2026-11-23 | 无 schema 迁移 | 配置 `FUWU_INSTALL_ROOT` 时，默认配置及相对 GitHub 凭据路径以稳定安装根解析；显式覆盖优先级、现有 API 和更新包格式保持兼容 | 本地后端193/158 subtests、前端82/typecheck/build、Django/迁移/版本/锁文件/编译、精确提交 CI/CD 和正式资产摘要通过；生产任务 succeeded/100%，健康版本、静态文件、数据库/备份完整性、配置保持与刷新恢复均读回通过 |
 
-## 0.1.2 配置路径兼容修正候选（2026-11-23）
+## 0.1.2 配置路径兼容修正正式发行（2026-11-23）
 
 - 配置 `FUWU_INSTALL_ROOT` 的直接运行部署将默认 `fuwu.config.json` 和相对 GitHub 凭据路径解析到稳定安装根，避免 `current` 切换后误读新版本目录。
 - 显式 `FUWU_CONFIG_FILE`、`FUWU_GITHUB_CREDENTIALS_FILE` 继续优先；未配置安装根时保持本地源码根路径行为。
-- 无数据库 schema 迁移；API 与 0.1.1 更新包格式保持兼容。正式标签、Release、CI/CD 与线上安装须以精确提交的后续验证记录为准。
+- 无数据库 schema 迁移；API 与 0.1.1 更新包格式保持兼容。
+- 正式标签固定 `bcec84936ba147d0ac4ded6ccc1f5d0e98d561b6`；[CI 45173550490](https://github.com/shiyi-log/fuwu/actions/runs/45173550490)、[CD 45174683717](https://github.com/shiyi-log/fuwu/actions/runs/45174683717) 均成功，[v0.1.2](https://github.com/shiyi-log/fuwu/releases/tag/v0.1.2) 已为最新正式 Release。源码包和完整更新包按正式 `SHA256SUMS` 在本地独立校验通过。
+- 本地后端 `193 passed`、158 subtests，前端 `82 passed`、typecheck/build，Django、迁移、版本、锁文件及编译检查通过。
+- Chrome 既有 Fuwu 标签页使用原账号登录，从“系统更新”页面确认开始 `0.1.1 → 0.1.2` 更新。任务 `9861f46ceac387b5a811072562937c51` 于 `2026-11-23T12:51:53.283664Z` 开始，`12:52:23.036450Z` 完成；页面与独立 HTTPS API 均为 `status=succeeded`、`progress=100`、`errorCode=null`。
+- SSH 当前链接、包清单和 `.cloud-revision` 均读回精确 `0.1.2 / bcec84936ba147d0ac4ded6ccc1f5d0e98d561b6`，systemd active/enabled，本机和公网健康检查均为目标版本；公网 HTML 与主 JS 和活动版本逐字节一致。更新后数据库及自动备份 `integrity_check=ok`，4 个项目、24 条发行、5 条 latest、1 个账号不变；`projects`、`releases`、`latest`、`account_users` 四表与自动备份逐行完全一致。备份目录 `0700`、文件 `0600`，现有配置和凭据内容保持，staging/logs/secrets 与 Nginx 配置保持。
+- 刷新并使用原凭据重新登录后，任务恢复显示更新成功、当前/最新均 `0.1.2` 和“已是最新版本”；旧静态资源导致的登录跳转失败已通过页面刷新恢复，未重置密码。本地视觉证据见项目台账。未在生产注入失败验证 updater 自动回滚。
 
 ## 0.1.0 正式发行（2026-11-16）
 
@@ -31,13 +36,15 @@
 - 数据库只幂等增加找回验证码、限速、安全事件表；旧账号、密码哈希、发行与渠道指针保持兼容。应用回退不删除新增表。
 - 本轮后端 `167 tests / OK`、前端 `73 passed`、指定 Node 22.18.0 构建、Django/锁文件/打包通过；真实 S3 独立前缀发布、HEAD/GET、幂等、冲突、回退通过，生产渠道指针不变。SMTP 未配置、真实投递未验收；精确提交 CI `43745268674`、CD `43745536296` 和生产升级通过，公网登录/恢复入口及 Heyue 1.0.24 完整资产摘要读回通过。
 
-## 0.1.1 在线更新候选（2026-11-23）
+## 0.1.1 在线更新正式发行（2026-11-23）
 
 - 管理台新增受 `fuwu.update.manage` 权限保护的“系统更新”页面；支持查看稳定版、确认并提交更新、轮询持久任务状态，以及页面刷新后恢复任务查询。
 - GitHub Release 工作流从与 tag 一致的精确提交构建完整更新包，包含后端、依赖锁文件和前端静态构建产物；`SHA256SUMS` 同时覆盖源码包和更新包。
 - 后端 updater 固定 GitHub 仓库与正式 Release 契约，校验资产大小、SHA256、归档路径与更新清单；使用独立 systemd transient worker、SQLite 一致性备份、不可变版本目录及原子 `current` 链接切换。
 - 服务重启后要求 `/healthz` 返回目标版本；切换后启动或健康检查失败时恢复旧版本并验证旧版健康。更新器不覆盖 `.env`、SQLite、staging、logs 或 secrets，也不隐式处理非兼容数据库迁移。
-- 生产旧部署由 root 直接启动 `fuwu-server`，启用在线安装前必须完成宿主 bootstrap：建立 root 所有的版本目录和 current 静态资源链接，安装并启动 `fuwu-server.service`，并验证数据库、管理登录、API 与 Nginx 静态内容。标签、Release、CI/CD 与生产部署状态在本候选完成后追加证据，不以本地实现代替实际验收。
+- 正式标签固定 `ab52d74fe79234944136b7d4ef7bdd7f12485c96`；[CI 45172745086](https://github.com/shiyi-log/fuwu/actions/runs/45172745086)、[CD 45173416540](https://github.com/shiyi-log/fuwu/actions/runs/45173416540) 均成功，[v0.1.1](https://github.com/shiyi-log/fuwu/releases/tag/v0.1.1) 已正式发布；源码包和完整更新包按正式 `SHA256SUMS` 在本地独立校验通过。
+- 生产完成旧 root 直接运行部署的首次 SSH bootstrap 时，当前链接和包清单读回 `0.1.1 / ab52d74`，`fuwu-server.service` active/enabled；SQLite `integrity_check=ok`，4 个项目、24 条发行、5 条 latest、1 个账号，现有 `.env`、根配置和 GitHub 凭据内容一致。备份与操作证据见项目台账；随后从管理台实际升级至上文 `0.1.2`。
+- 首次引导的公网检查因 Cloudflare 拒绝 Python 默认 User-Agent 进入引导脚本回退分支；使用明确验收 User-Agent 重试后成功，Nginx 配置未修改。关键管理 API 的登录、用户、权限和项目读取均 HTTP 200；浏览器旧脚本动态 import 失败经当前资源重新加载恢复。bootstrap、管理台成功更新与未执行的生产 updater 失败回滚验收分别记录。
 
 ## 0.0.2 变更
 
