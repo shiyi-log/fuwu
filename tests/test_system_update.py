@@ -20,6 +20,7 @@ from fuwu_service.system_update import (
     _NoRedirectHandler,
     _install_root,
     _preflight_install,
+    _require_protected_path,
     _require_protected_tree,
     _reconcile_active_job_unlocked,
     _launch_worker,
@@ -298,4 +299,4 @@ class SystemUpdateTests(unittest.TestCase):
 
             target.chmod(0o666)
             with self.assertRaisesRegex(OSError, "symlink target is unprotected"):
-                _require_protected_tree(root)
+                _require_protected_path(link)
