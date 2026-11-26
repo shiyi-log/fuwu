@@ -211,6 +211,10 @@ overrides:
   vue-i18n: ^11.4.24
   '@intlify/core-base': ^11.4.24
   '@intlify/shared': ^11.4.24
+  minimatch: ^11.0.9
+  glob: ^14.0.6
+  qs: ^6.17.1
+  follow-redirects: ^1.16.3
 
 publicHoistPattern:
   - lefthook
