@@ -125,7 +125,33 @@ uv run --env-file .env --frozen fuwu-server
 uv run --frozen pytest tests/test_auth.py::TestPasswordResetFlow::test_email_password_reset_on_django_and_lightweight_adapters -v
 ```
 
-### 2. 使用测试工具验证
+### 2. 使用自动检测工具
+
+如果你还不知道 SMTP 配置，可以使用自动检测工具：
+
+```bash
+# 检测单个邮箱
+./scripts/detect_smtp_config.py user@gmail.com
+
+# 批量检测多个邮箱
+./scripts/detect_smtp_config.py user@qq.com admin@163.com
+
+# 交互模式
+./scripts/detect_smtp_config.py --interactive
+
+# 列出所有支持的服务商
+./scripts/detect_smtp_config.py --list-providers
+```
+
+工具支持 30+ 邮箱服务商：
+- 国内：QQ / Foxmail / 163 / 126 / 阿里云 / 新浪 / 搜狐
+- 国际：Gmail / Outlook / Yahoo / iCloud / AOL
+- 企业邮箱：腾讯企业邮 / 阿里企业邮 / Coremail
+- 邮件服务：SendGrid / Mailgun / SparkPost
+
+工具会自动生成可直接使用的 `.env` 配置格式，并提示是否需要应用专用密码或授权码。
+
+### 3. 使用测试工具验证
 
 创建测试脚本 `scripts/test_smtp.py`：
 
