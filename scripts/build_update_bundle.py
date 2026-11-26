@@ -144,17 +144,25 @@ def build(args: argparse.Namespace) -> Path:
             if not (checkout / relative).exists():
                 raise ValueError(f"required source path is missing: {relative}")
 
-        frontend = checkout / "frontend"
-        install_env = os.environ.copy()
-        install_env["CI"] = "true"
-        run(
-            ["pnpm", "install", "--frozen-lockfile"],
-            cwd=frontend,
-            env=install_env,
-        )
-        run(["pnpm", "--filter", "@vben/web-antd", "build"], cwd=frontend)
-
         built_dist = checkout / FRONTEND_DIST
+        if args.frontend_dist:
+            frontend_dist = args.frontend_dist.resolve()
+            if not (frontend_dist / "index.html").is_file():
+                raise ValueError("provided frontend build is missing dist/index.html")
+            if built_dist.exists():
+                shutil.rmtree(built_dist)
+            shutil.copytree(frontend_dist, built_dist)
+        else:
+            frontend = checkout / "frontend"
+            install_env = os.environ.copy()
+            install_env["CI"] = "true"
+            run(
+                ["pnpm", "install", "--frozen-lockfile"],
+                cwd=frontend,
+                env=install_env,
+            )
+            run(["pnpm", "--filter", "@vben/web-antd", "build"], cwd=frontend)
+
         if not (built_dist / "index.html").is_file():
             raise ValueError("frontend build did not produce dist/index.html")
 
@@ -191,6 +199,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--version", required=True)
     parser.add_argument("--tag", required=True)
+    parser.add_argument(
+        "--frontend-dist",
+        type=Path,
+        help="Reuse a frontend dist directory built for the exact source commit",
+    )
     parser.add_argument("--output-dir", type=Path, default=ROOT / "dist")
     return parser.parse_args()
 

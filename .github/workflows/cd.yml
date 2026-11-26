@@ -1,0 +1,218 @@
+name: CD
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, commit, or version tag to validate"
+        required: true
+        type: string
+        default: "main"
+      publish:
+        description: "Create a GitHub Release after all checks pass"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve:
+    name: Resolve exact source and release metadata
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+      version: ${{ steps.source.outputs.version }}
+      release_tag: ${{ steps.source.outputs.release_tag }}
+    steps:
+      - name: Check out selected source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Resolve source and validate version
+        id: source
+        env:
+          REQUESTED_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.ref }}
+          SHOULD_PUBLISH: ${{ github.event_name == 'push' || inputs.publish == true }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          source_sha=$(git rev-parse --verify 'HEAD^{commit}')
+          version=$(python3 -c 'import pathlib, tomllib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')
+          [[ "$source_sha" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$version" =~ ^[0-9]\.[0-9]\.[0-9]$ ]]
+
+          release_tag=""
+          if [[ "$SHOULD_PUBLISH" == "true" ]]; then
+            requested_tag="${REQUESTED_REF#refs/tags/}"
+            [[ "$requested_tag" =~ ^v[0-9]\.[0-9]\.[0-9]$ ]] || {
+              echo "Publishing requires a version tag such as v0.1.3." >&2
+              exit 1
+            }
+            tag_sha=$(git rev-parse --verify "refs/tags/${requested_tag}^{commit}")
+            [[ "$tag_sha" == "$source_sha" ]] || {
+              echo "The selected tag does not identify the checked-out commit." >&2
+              exit 1
+            }
+            [[ "$requested_tag" == "v$version" ]] || {
+              echo "The version tag must match pyproject.toml." >&2
+              exit 1
+            }
+            git fetch --no-tags origin main:refs/remotes/origin/main
+            git merge-base --is-ancestor "$source_sha" refs/remotes/origin/main || {
+              echo "The release commit must already be reachable from origin/main." >&2
+              exit 1
+            }
+            release_tag="$requested_tag"
+          fi
+
+          {
+            echo "source_sha=$source_sha"
+            echo "version=$version"
+            echo "release_tag=$release_tag"
+          } >> "$GITHUB_OUTPUT"
+
+  checks:
+    name: Run checks once for the exact source
+    needs: resolve
+    uses: ./.github/workflows/ci.yml
+    with:
+      source_ref: ${{ needs.resolve.outputs.source_sha }}
+      build_release_artifact: true
+    permissions:
+      contents: read
+
+  package:
+    name: Package source and update bundle
+    needs: [resolve, checks]
+    if: needs.resolve.result == 'success' && needs.checks.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Download the CI frontend build
+        uses: actions/download-artifact@v4
+        with:
+          name: fuwu-frontend-dist
+          path: ci-frontend
+
+      - name: Verify and install the CI frontend build
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          (cd ci-frontend && sha256sum --check frontend-dist.sha256)
+          test "$(cat ci-frontend/frontend-dist.source)" = "$SOURCE_SHA"
+          mkdir -p frontend/apps/web-antd
+          tar -xzf ci-frontend/frontend-dist.tar.gz -C frontend/apps/web-antd
+          test -f frontend/apps/web-antd/dist/index.html
+
+      - name: Build source archive
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p dist
+          git archive --format=tar.gz --output="dist/fuwu-${SOURCE_SHA}.tar.gz" "$SOURCE_SHA"
+          (cd dist && sha256sum "fuwu-${SOURCE_SHA}.tar.gz" > SHA256SUMS)
+
+      - name: Build update bundle from the CI frontend build
+        if: needs.resolve.outputs.release_tag != ''
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          update_dir=$(mktemp -d)
+          python3 scripts/build_update_bundle.py \
+            --source-sha "$SOURCE_SHA" \
+            --version "$VERSION" \
+            --tag "$RELEASE_TAG" \
+            --frontend-dist "$GITHUB_WORKSPACE/frontend/apps/web-antd/dist" \
+            --output-dir "$update_dir"
+          cp "$update_dir/fuwu-update-${VERSION}.tar.gz" dist/
+          cat "$update_dir/SHA256SUMS" >> dist/SHA256SUMS
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: Upload release packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuwu-release-${{ needs.resolve.outputs.source_sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish GitHub Release
+    needs: [resolve, checks, package]
+    if: >-
+      needs.resolve.result == 'success' &&
+      needs.checks.result == 'success' &&
+      needs.package.result == 'success' &&
+      needs.resolve.outputs.release_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out exact source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.source_sha }}
+          fetch-depth: 0
+
+      - name: Download release packages
+        uses: actions/download-artifact@v4
+        with:
+          name: fuwu-release-${{ needs.resolve.outputs.source_sha }}
+          path: dist
+
+      - name: Recheck tag, version, and package checksums
+        env:
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          VERSION: ${{ needs.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          test "$(git rev-parse --verify "refs/tags/${RELEASE_TAG}^{commit}")" = "$SOURCE_SHA"
+          test "$RELEASE_TAG" = "v$VERSION"
+          test -f "dist/fuwu-${SOURCE_SHA}.tar.gz"
+          test -f "dist/fuwu-update-${VERSION}.tar.gz"
+          (cd dist && sha256sum --check SHA256SUMS)
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.resolve.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.resolve.outputs.source_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          notes_file="docs/releases/${RELEASE_TAG#v}.md"
+          release_notes_args=(--generate-notes)
+          if [[ -f "$notes_file" ]]; then
+            release_notes_args=(--notes-file "$notes_file")
+          fi
+          gh release create "$RELEASE_TAG" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --target "$SOURCE_SHA" \
+            --title "$RELEASE_TAG" \
+            "${release_notes_args[@]}"
