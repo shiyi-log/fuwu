@@ -58,6 +58,64 @@ class PublicDownloadTests(unittest.TestCase):
         with self.assertRaisesRegex(ReleaseError, "download object was not found"):
             self.service.public_download("heyue", "1.0.2", "secret.txt")
 
+    def _publish_version(self, version: str, job_name: str, channel: str = "stable") -> None:
+        body = f"heyue package {version}".encode()
+        digest = hashlib.sha256(body).hexdigest()
+        job = Path(self.directory.name) / "staging" / job_name
+        job.mkdir()
+        (job / f"heyue-python-{version}.tar.gz").write_bytes(body)
+        manifest = {
+            "schemaVersion": 1,
+            "repository": "shiyi-log/heyue",
+            "version": version,
+            "tag": f"v{version}",
+            "revision": version.replace(".", "")[:1].ljust(40, "a"),
+            "releaseId": int(version.replace(".", "")),
+            "draft": False,
+            "prerelease": False,
+            "assets": {"python": [{"path": f"heyue-python-{version}.tar.gz", "size": len(body), "sha256": digest}]},
+        }
+        (job / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        (job / "SHA256SUMS").write_text(f"{digest}  heyue-python-{version}.tar.gz\n", encoding="utf-8")
+        status, response = self.service.publish(
+            {"project": "heyue", "version": version, "channel": channel, "staging_ref": job_name},
+            actor="test",
+            request_id=f"publish-{job_name}",
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(response["status"], "published")
+
+    def test_versions_lists_published_stable_by_numeric_order(self) -> None:
+        self._publish_version("1.0.10", "job-2")
+        self._publish_version("1.0.9", "job-3")
+        descriptor = self.service.public_versions("heyue")
+        self.assertEqual(descriptor["name"], "versions.json")
+        self.assertEqual(hashlib.sha256(descriptor["body"]).hexdigest(), descriptor["sha256"])
+        document = json.loads(descriptor["body"])
+        self.assertEqual(document["project"], "heyue")
+        self.assertEqual(document["channel"], "stable")
+        self.assertEqual([item["version"] for item in document["versions"]], ["1.0.10", "1.0.9", "1.0.2"])
+        first = document["versions"][0]
+        self.assertEqual(set(first), {"version", "tag", "revision", "releaseId", "publishedAt", "manifestKey", "manifestSha256"})
+        self.assertEqual(first["tag"], "v1.0.10")
+        self.assertEqual(first["manifestKey"], "releases/heyue/v1.0.10/manifest.json")
+
+    def test_versions_excludes_beta_and_unpublished(self) -> None:
+        self._publish_version("1.0.11", "job-beta", channel="beta")
+        document = json.loads(self.service.public_versions("heyue")["body"])
+        self.assertEqual([item["version"] for item in document["versions"]], ["1.0.2"])
+        release = self.service.repository.get_release("heyue", "1.0.2", "stable")
+        self.service.repository.update_release_status(release["id"], "failed")
+        document = json.loads(self.service.public_versions("heyue")["body"])
+        self.assertEqual(document["versions"], [])
+
+    def test_versions_hides_unknown_and_inactive_projects(self) -> None:
+        with self.assertRaisesRegex(ReleaseError, "download object was not found"):
+            self.service.public_versions("nope")
+        self.service.repository.update_project("heyue", {"active": False})
+        with self.assertRaisesRegex(ReleaseError, "download object was not found"):
+            self.service.public_versions("heyue")
+
 
 if __name__ == "__main__":
     unittest.main()

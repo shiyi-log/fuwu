@@ -133,6 +133,25 @@ def latest_download_view(request, project_id: str, channel: str):
 
 
 @csrf_exempt
+def versions_download_view(request, project_id: str):
+    """Django 适配器：匿名读取已发布 stable 版本列表（供受控降级选择目标）。"""
+    if request.method != "GET":
+        return JsonResponse({"code": "method_not_allowed", "message": "method not allowed"}, status=405)
+    try:
+        descriptor = get_service().public_versions(project_id)
+    except ReleaseError as error:
+        return JsonResponse({"code": error.code, "message": error.message}, status=error.status)
+    except Exception:
+        return JsonResponse({"code": "internal_error", "message": "internal server error"}, status=500)
+    response = HttpResponse(descriptor["body"], content_type="application/json")
+    response["Content-Length"] = str(descriptor["size"])
+    response["Content-Disposition"] = "attachment; filename*=UTF-8''versions.json"
+    response["Cache-Control"] = "no-store, max-age=0"
+    response["X-Fuwu-SHA256"] = descriptor["sha256"]
+    return response
+
+
+@csrf_exempt
 def heyue_bootstrap_view(request):
     """Anonymous fixed bootstrap for a fresh Heyue host."""
     if request.method not in {"GET", "HEAD"}:

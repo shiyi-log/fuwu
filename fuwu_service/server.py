@@ -114,10 +114,17 @@ class ApiHandler(BaseHTTPRequestHandler):
         parts = [unquote(part) for part in target.split("/")]
         # /api/downloads/{project}/{version}/{filename}; filenames are rooted
         # release assets and are resolved against a published DB record.
-        if len(parts) != 6 or parts[:3] != ["", "api", "downloads"] or any(not part for part in parts[3:]):
+        if len(parts) not in {5, 6} or parts[:3] != ["", "api", "downloads"] or any(not part for part in parts[3:]):
             raise ReleaseError("object_not_found", "download object was not found", 404)
-        is_latest = parts[4] in {"stable", "beta"} and parts[5] == "latest.json"
-        if is_latest:
+        # /api/downloads/{project}/versions.json lists published stable versions
+        # for the controlled downgrade picker; it is as mutable as latest.json.
+        is_versions = len(parts) == 5
+        if is_versions and parts[4] != "versions.json":
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        is_latest = not is_versions and parts[4] in {"stable", "beta"} and parts[5] == "latest.json"
+        if is_versions:
+            descriptor = self.service.public_versions(parts[3])
+        elif is_latest:
             descriptor = self.service.public_latest_download(parts[3], parts[4])
         else:
             # Heyue object-storage keys carry a leading ``v`` in the
@@ -128,11 +135,12 @@ class ApiHandler(BaseHTTPRequestHandler):
         response = self.service.open_public_download(descriptor)
         try:
             self.send_response(200)
-            content_type = "application/json" if is_latest else (mimetypes.guess_type(descriptor["name"])[0] or "application/octet-stream")
+            mutable = is_latest or is_versions
+            content_type = "application/json" if mutable else (mimetypes.guess_type(descriptor["name"])[0] or "application/octet-stream")
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(descriptor["size"]))
             self.send_header("Content-Disposition", "attachment; filename*=UTF-8''" + descriptor["name"])
-            self.send_header("Cache-Control", "no-store, max-age=0" if is_latest else "public, max-age=31536000, immutable")
+            self.send_header("Cache-Control", "no-store, max-age=0" if mutable else "public, max-age=31536000, immutable")
             self.send_header("X-Fuwu-SHA256", descriptor["sha256"])
             self.end_headers()
             while True:

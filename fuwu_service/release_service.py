@@ -102,6 +102,47 @@ class ReleaseService:
                 raise ReleaseError("object_not_found", "download object was not found", 404) from None
             raise
 
+    def public_versions(self, project: str) -> dict[str, Any]:
+        """列出项目已发布的 stable 版本，供匿名升级器选择受控降级目标。
+
+        只读取数据库中 status=published 的 stable 发行记录，返回的字段均来自
+        已校验的不可变 manifest；不访问对象存储，不暴露 beta 或未发布版本，
+        也不接受调用方指定的对象键。
+        """
+        project = project_value(validate_project_id, project)
+        registered = self.repository.get_project(project)
+        if not registered or not registered["active"]:
+            raise ReleaseError("object_not_found", "download object was not found", 404)
+        items = []
+        for release in self.repository.list_releases(project, "stable"):
+            if release.get("status") != "published":
+                continue
+            try:
+                version = validate_version(release["version"])
+                key = tuple(int(part) for part in version.split("."))
+            except (ReleaseError, KeyError, TypeError, ValueError):
+                continue
+            manifest = release.get("manifest")
+            if not isinstance(manifest, Mapping) or manifest.get("version") != version:
+                continue
+            items.append((key, {
+                "version": version,
+                "tag": release["tag"],
+                "revision": release["revision"],
+                "releaseId": str(release["release_id"]),
+                "publishedAt": release["published_at"],
+                "manifestKey": release["manifest_key"],
+                "manifestSha256": safe_digest(json_bytes(manifest)),
+            }))
+        items.sort(key=lambda item: item[0], reverse=True)
+        body = json_bytes({
+            "schemaVersion": 1,
+            "project": project,
+            "channel": "stable",
+            "versions": [item[1] for item in items],
+        })
+        return {"name": "versions.json", "key": f"{self.prefix}/{project}/stable/versions.json", "size": len(body), "sha256": safe_digest(body), "body": body}
+
     def public_latest_download(self, project: str, channel: str) -> dict[str, Any]:
         """按数据库发行绑定解析当前 stable 指针，并返回存储中的原始字节。
 
