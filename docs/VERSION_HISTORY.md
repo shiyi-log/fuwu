@@ -17,6 +17,17 @@
 | `0.1.0` | GitHub Release 已发布；标签/原生产提交 `3172ed1` | 2026-11-16 | SQLite 幂等增加三张恢复表，原有业务记录保持；旧代码对加表库回退兼容已演练 | 核心拆分兼容旧导入；增加邮箱恢复，代理 HTTPS 判定收紧；发行及匿名下载契约兼容 | 后端167、前端73、CI/CD、真实S3隔离发布回退、生产升级与公网资产摘要通过；SMTP未配置，真实邮件投递待验收 |
 | `0.1.1` | 正式 Release 已发布；标签固定 `ab52d74fe79234944136b7d4ef7bdd7f12485c96`；首次生产 bootstrap 完成后已在线升级至 `0.1.2` | 2026-11-23 | 无 schema 迁移；更新前使用 SQLite backup API 创建一致性快照 | 新增受权限保护的自更新检查、安装任务、状态查询、systemd 重启、版本健康检查与失败回滚；既有发行管理 API 保持兼容 | 后端188/158 subtests、前端82/typecheck/build、精确提交 CI/CD 及正式源码/更新包摘要通过；首次 bootstrap 与后续管理台 `0.1.1 → 0.1.2` 成功任务分别验收；生产未故障注入验证自动回滚 |
 | `0.1.2` | GitHub Latest Release 已发布；标签与生产 revision 为 `bcec84936ba147d0ac4ded6ccc1f5d0e98d561b6`；管理台实际在线更新成功 | 2026-11-23 | 无 schema 迁移 | 配置 `FUWU_INSTALL_ROOT` 时，默认配置及相对 GitHub 凭据路径以稳定安装根解析；显式覆盖优先级、现有 API 和更新包格式保持兼容 | 本地后端193/158 subtests、前端82/typecheck/build、Django/迁移/版本/锁文件/编译、精确提交 CI/CD 和正式资产摘要通过；生产任务 succeeded/100%，健康版本、静态文件、数据库/备份完整性、配置保持与刷新恢复均读回通过 |
+| `0.1.3` | 准备发布；当前工作树候选 | 2026-11-27 | 无 schema 迁移 | 增加 SMTP 自动检测工具、完善 SMTP 文档；新增受控降级版本列表端点；强制更新深层依赖修复安全漏洞；既有 API 保持兼容 | 待验证 |
+
+## 0.1.3 SMTP 工具与依赖安全更新（2026-11-27）
+
+- 新增 `scripts/detect_smtp_config.py` 自动检测工具，支持 30+ 邮箱服务商（QQ、163、Gmail、Outlook、企业邮箱等），自动生成 `.env` 配置格式。
+- 完善 `docs/SMTP_GUIDE.md`，增加配置示例、测试工具和故障排除指南。
+- 新增 `/api/downloads/{project}/versions.json` 端点，列出已发布稳定版本供受控降级选择。
+- 使用 pnpm overrides 强制更新深层依赖：node-forge (1.4.0 → 1.4.4), vue-i18n (11.4.4 → 11.4.24), minimatch (→ 11.0.9), glob (→ 14.0.6), qs (→ 6.17.1), follow-redirects (→ 1.16.3)，happy-dom (20.9.0 → 21.0.4)。
+- Python 依赖更新：Django (6.0.9 → 6.0.10), asgiref (3.12.1 → 3.13.0), pytest (9.1.1 → 9.2.0) 等。
+- 无数据库 schema 迁移；API 与 0.1.2 保持兼容。
+- 本地验证：后端 193 passed/158 subtests（SMTP 配置测试、公开版本端点测试）、前端 391 passed（42 个测试文件）均通过。
 
 ## 0.1.2 配置路径兼容修正正式发行（2026-11-23）
 
