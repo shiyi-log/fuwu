@@ -39,7 +39,7 @@ uv run --frozen python -m fuwu_service.accounts bootstrap-config --database "$FU
 
 超级管理员登录后可在“账号管理”中注册成员、配置角色/权限和项目范围、停用账号及重置成员密码；成员可在个人资料中使用当前密码修改自己的密码。密码、角色、权限、项目范围和停用状态变更会撤销受影响账号的现有会话。
 
-登录账号可使用邮箱作为用户名；登录页提供邮件验证码找回密码。启用该功能前需在部署环境配置 SMTP。现有管理员首次绑定邮箱可通过服务器本机 `set-superadmin-email` 命令完成，见[部署说明](docs/DEPLOYMENT.md)。
+登录账号可使用邮箱作为用户名；登录页提供邮件验证码找回密码。启用该功能前需在部署环境配置 SMTP，详见 [SMTP 配置指南](docs/SMTP_GUIDE.md)。现有管理员首次绑定邮箱可通过服务器本机 `set-superadmin-email` 命令完成，见[部署说明](docs/DEPLOYMENT.md)。
 
 忘记密码且尚未配置邮件时，服务器操作员可执行 `bash scripts/reset_password.sh --database "$FUWU_DATABASE" --username admin`，在终端隐藏输入两次新密码。脚本会读取项目根目录的 `.env`；其中已配置 `FUWU_DATABASE` 时，可简化为 `bash scripts/reset_password.sh --username admin`。成功后撤销目标账号的全部会话和找回验证码；具体容器命令见[部署说明](docs/DEPLOYMENT.md)。
 
@@ -83,6 +83,7 @@ Compose 可启动 MySQL 与 Redis 服务，但当前业务数据仍保存在 SQL
 
 - [项目台账](PROJECT_LEDGER.md)
 - [API 接口文档](docs/API.md)
+- [SMTP 配置指南](docs/SMTP_GUIDE.md) - 邮箱验证码找回密码配置
 - [Heyue 匿名安装与源码归档说明](docs/HEYUE_BUILD_INSTRUCTIONS.md)
 - [启动与部署说明](docs/DEPLOYMENT.md)
 - [发行一致性说明](docs/PUBLISH_CONSISTENCY.md)
